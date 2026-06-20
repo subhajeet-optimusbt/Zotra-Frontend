@@ -37,6 +37,79 @@ const STYLES_EXTRA = `
 .il-toast{position:fixed;bottom:24px;right:24px;padding:10px 16px;border-radius:10px;font-size:12.5px;font-weight:500;color:#fff;z-index:9999;display:flex;align-items:center;gap:8px;box-shadow:0 4px 20px rgba(0,0,0,.18);animation:toastIn .2s ease}
 .il-toast-ok{background:#1B6B4A}
 .il-toast-err{background:#B91C1C}
+@keyframes toastIn{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:translateY(0)}}
+
+/* Edit drawer section badges */
+.il-section-ro {
+  display: flex; align-items: center; gap: 6px;
+  margin: 16px 0 10px;
+  padding: 7px 12px;
+  border-radius: 7px;
+  background: var(--bg3);
+  border: 0.5px solid var(--brd);
+  font-size: 10px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase;
+  color: var(--ink5);
+}
+.il-section-ro .il-section-badge {
+  font-size: 9px; padding: 2px 6px; border-radius: 4px;
+  background: var(--bg3); border: 0.5px solid var(--brd2);
+  color: var(--ink5); font-weight: 600; letter-spacing: .05em;
+  margin-left: auto;
+}
+.il-section-edit {
+  display: flex; align-items: center; gap: 6px;
+  margin: 16px 0 10px;
+  padding: 7px 12px;
+  border-radius: 7px;
+  background: var(--pp,#f0edff);
+  border: 0.5px solid var(--p);
+  font-size: 10px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase;
+  color: var(--p);
+}
+.il-section-edit .il-edit-dot {
+  width: 6px; height: 6px; border-radius: 50%; background: var(--p); flex-shrink: 0;
+}
+.il-section-edit .il-section-badge-edit {
+  font-size: 9px; padding: 2px 7px; border-radius: 4px;
+  background: var(--p); color: #fff; font-weight: 700; letter-spacing: .04em;
+  margin-left: auto;
+}
+
+/* Field label styles */
+.il-field-lbl-ro {
+  font-size: 9.5px; font-weight: 700; letter-spacing: .07em; text-transform: uppercase;
+  color: var(--ink5); margin-bottom: 4px;
+}
+.il-field-lbl-edit {
+  font-size: 9.5px; font-weight: 700; letter-spacing: .07em; text-transform: uppercase;
+  color: var(--p); margin-bottom: 4px; display: flex; align-items: center; gap: 4px;
+}
+.il-field-lbl-edit::before {
+  content: ''; display: inline-block; width: 3px; height: 3px;
+  border-radius: 50%; background: var(--p); flex-shrink: 0;
+}
+
+/* Editable input highlight */
+.il-edit-input {
+  width: 100%; min-width: 0; box-sizing: border-box;
+  border: 1px solid var(--p) !important;
+  background: var(--bg) !important;
+}
+.il-edit-input:focus {
+  outline: none;
+  box-shadow: 0 0 0 2px var(--pp, rgba(91,79,212,.15));
+}
+.il-edit-ta {
+  width: 100%; min-width: 0; box-sizing: border-box;
+  height: 52px; resize: vertical; padding: 7px 10px;
+  line-height: 1.45; font-family: inherit;
+  border: 1px solid var(--p) !important;
+  background: var(--bg) !important;
+}
+.il-edit-ta:focus {
+  outline: none;
+  box-shadow: 0 0 0 2px var(--pp, rgba(91,79,212,.15));
+}
 `;
 
 function ILToast({ msg, type }: ToastState) {
@@ -80,7 +153,8 @@ function canonicalPhase(p: string): string {
   return p;
 }
 
-function FieldRow({
+// ── Editable field row ────────────────────────────────────────────────────────
+function EditFieldRow({
   label,
   hint,
   children,
@@ -91,18 +165,7 @@ function FieldRow({
 }) {
   return (
     <div style={{ marginTop: 10 }}>
-      <div
-        style={{
-          fontSize: "9.5px",
-          fontWeight: 700,
-          letterSpacing: ".07em",
-          textTransform: "uppercase",
-          color: "var(--ink5)",
-          marginBottom: 4,
-        }}
-      >
-        {label}
-      </div>
+      <div className="il-field-lbl-edit">{label}</div>
       {children}
       {hint && (
         <div style={{ fontSize: 10.5, color: "var(--ink5)", marginTop: 3 }}>
@@ -113,37 +176,25 @@ function FieldRow({
   );
 }
 
-function Divider({ label, editable }: { label: string; editable?: boolean }) {
+// ── Read-only field row ───────────────────────────────────────────────────────
+function ROFieldRow({
+  label,
+  hint,
+  children,
+}: {
+  label: string;
+  hint?: string;
+  children: ReactNode;
+}) {
   return (
-    <div
-      style={{
-        marginTop: 14,
-        marginBottom: 2,
-        paddingTop: 12,
-        borderTop: "0.5px solid var(--brd)",
-        fontSize: "9.5px",
-        fontWeight: 700,
-        letterSpacing: ".08em",
-        textTransform: "uppercase",
-        color: editable ? "var(--p)" : "var(--ink5)",
-        display: "flex",
-        alignItems: "center",
-        gap: 6,
-      }}
-    >
-      {editable && (
-        <span
-          style={{
-            width: 5,
-            height: 5,
-            borderRadius: "50%",
-            background: "var(--p)",
-            display: "inline-block",
-            flexShrink: 0,
-          }}
-        />
+    <div style={{ marginTop: 10 }}>
+      <div className="il-field-lbl-ro">{label}</div>
+      {children}
+      {hint && (
+        <div style={{ fontSize: 10.5, color: "var(--ink5)", marginTop: 3 }}>
+          {hint}
+        </div>
       )}
-      {label}
     </div>
   );
 }
@@ -156,6 +207,7 @@ const roStyle: React.CSSProperties = {
   background: "var(--bg3)",
   color: "var(--ink4)",
   cursor: "default",
+  border: "0.5px solid var(--brd)",
 };
 const roTaStyle: React.CSSProperties = {
   ...roStyle,
@@ -165,6 +217,38 @@ const roTaStyle: React.CSSProperties = {
   lineHeight: 1.45,
   fontFamily: "inherit",
 };
+
+// ── Section Header ─────────────────────────────────────────────────────────────
+function ROSection({ label }: { label: string }) {
+  return (
+    <div className="il-section-ro">
+      <svg
+        width="12"
+        height="12"
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      >
+        <rect x="3" y="11" width="18" height="11" rx="2" ry="2" />
+        <path d="M7 11V7a5 5 0 0 1 10 0v4" />
+      </svg>
+      {label}
+      <span className="il-section-badge">Read-only</span>
+    </div>
+  );
+}
+
+function EditSection({ label }: { label: string }) {
+  return (
+    <div className="il-section-edit">
+      <span className="il-edit-dot" />
+      {label}
+    </div>
+  );
+}
 
 // ── Edit Drawer ───────────────────────────────────────────────────────────────
 function EditDrawer({
@@ -183,27 +267,6 @@ function EditDrawer({
     setForm((p) => ({ ...p, [k]: v }));
 
   const inputCls = "sv-input";
-  const editInputStyle: React.CSSProperties = {
-    width: "100%",
-    minWidth: 0,
-    boxSizing: "border-box",
-  };
-  const editTaStyle: React.CSSProperties = {
-    ...editInputStyle,
-    height: 60,
-    resize: "vertical",
-    padding: "6px 10px",
-    lineHeight: 1.45,
-    fontFamily: "inherit",
-  };
-  const editTaSmStyle: React.CSSProperties = {
-    ...editInputStyle,
-    height: 44,
-    resize: "vertical",
-    padding: "6px 10px",
-    lineHeight: 1.45,
-    fontFamily: "inherit",
-  };
 
   return (
     <div
@@ -221,35 +284,66 @@ function EditDrawer({
     >
       <div
         style={{
-          width: 500,
+          width: 520,
           height: "100%",
-          background: "var(--bg2)",
+          background: "var(--bg)",
           borderLeft: "0.5px solid var(--brd2)",
           display: "flex",
           flexDirection: "column",
-          boxShadow: "-8px 0 32px rgba(0,0,0,.12)",
+          boxShadow: "-12px 0 40px rgba(0,0,0,.18)",
           pointerEvents: "auto",
         }}
       >
         {/* Header */}
         <div
           style={{
-            padding: "14px 18px",
+            padding: "14px 18px 12px",
             borderBottom: "0.5px solid var(--brd)",
             display: "flex",
-            alignItems: "center",
-            gap: 10,
+            alignItems: "flex-start",
+            gap: 12,
             flexShrink: 0,
             background: "var(--bg2)",
           }}
         >
-          <div style={{ flex: 1 }}>
+          {/* Icon */}
+          <div
+            style={{
+              width: 36,
+              height: 36,
+              borderRadius: 9,
+              background: "var(--pp,#f0edff)",
+              color: "var(--p)",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              flexShrink: 0,
+              marginTop: 1,
+            }}
+          >
+            <svg
+              width="16"
+              height="16"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="1.8"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            >
+              <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" />
+              <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" />
+            </svg>
+          </div>
+
+          <div style={{ flex: 1, minWidth: 0 }}>
             <div
               style={{
-                fontSize: 13,
+                fontSize: 13.5,
                 fontWeight: 650,
                 color: "var(--ink)",
                 fontFamily: '"Sora",sans-serif',
+                lineHeight: 1.3,
               }}
             >
               {inf._isNew ? "New Inference" : "Edit Inference"}
@@ -257,17 +351,47 @@ function EditDrawer({
             <div
               style={{
                 fontSize: 10.5,
-                color: "var(--ink5)",
+                color: "var(--p)",
                 fontFamily: '"DM Mono",monospace',
-                marginTop: 2,
+                marginTop: 3,
+                background: "var(--pp,#f0edff)",
+                display: "inline-block",
+                padding: "1px 8px",
+                borderRadius: 5,
               }}
             >
               {form.inferenceType || "—"}
             </div>
           </div>
-          <button className="btn sm" onClick={onClose}>
-            ✕ Close
-          </button>
+
+          {/* Edit/RO count pills */}
+          <div
+            style={{
+              display: "flex",
+              flexDirection: "column",
+              alignItems: "flex-end",
+              gap: 4,
+            }}
+          >
+            <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+              <span
+                style={{
+                  fontSize: 9.5,
+                  padding: "2px 7px",
+                  borderRadius: 5,
+                  fontWeight: 600,
+                  background: "var(--pp,#f0edff)",
+                  color: "var(--p)",
+                  border: "0.5px solid var(--p)",
+                }}
+              >
+                {inf._isNew ? "All fields editable" : "4 editable fields"}
+              </span>
+              <button className="btn sm" onClick={onClose}>
+                ✕
+              </button>
+            </div>
+          </div>
         </div>
 
         {/* Body */}
@@ -275,115 +399,205 @@ function EditDrawer({
           style={{
             flex: 1,
             overflowY: "auto",
-            padding: "4px 18px 24px",
+            padding: "4px 18px 32px",
             scrollbarWidth: "thin",
           }}
         >
-          {/* ── READ-ONLY: Identity ── */}
-          <FieldRow label="InferenceType" hint="Read-only · API rowKey">
-            <input
-              className={inputCls}
-              style={roStyle}
-              value={form.inferenceType}
-              readOnly
-            />
-          </FieldRow>
-          <FieldRow label="InferenceName">
-            <input
-              className={inputCls}
-              style={roStyle}
-              value={form.inferenceName}
-              readOnly
-            />
-          </FieldRow>
-          <FieldRow
-            label="InferenceDefinition"
-            hint="Read-only · semantic definition used by LLM"
-          >
-            <textarea
-              className={inputCls}
-              style={roTaStyle}
-              value={form.inferenceDefinition}
-              readOnly
-            />
-          </FieldRow>
+          {/* ── IDENTITY: read-only when editing, fully editable when new ── */}
+          {inf._isNew ? (
+            <EditSection label="Identity · define the new inference" />
+          ) : (
+            <ROSection label="Identity · semantic key fields used by the LLM" />
+          )}
 
-          {/* ── READ-ONLY: Phase / Force / SortOrder ── */}
-          <div
-            style={{
-              display: "grid",
-              gridTemplateColumns: "1fr 1fr 80px",
-              gap: 10,
-              marginTop: 10,
-            }}
-          >
-            <div>
+          {inf._isNew ? (
+            <>
+              <div style={{ marginTop: 10 }}>
+                <div className="il-field-lbl-edit">InferenceName</div>
+                <input
+                  className={`${inputCls} il-edit-input`}
+                  value={form.inferenceName}
+                  placeholder="e.g. Budget Confirmed"
+                  onChange={(e) => {
+                    const name = e.target.value;
+                    const slug = name
+                      .toLowerCase()
+                      .replace(/[^a-z0-9]+/g, "_")
+                      .replace(/^_|_$/g, "");
+                    setForm((p) => ({
+                      ...p,
+                      inferenceName: name,
+                      inferenceType: slug,
+                    }));
+                  }}
+                />
+              </div>
+              <div style={{ marginTop: 10 }}>
+                <div className="il-field-lbl-ro">
+                  InferenceType{" "}
+                  <span
+                    style={{
+                      fontSize: 9,
+                      fontWeight: 500,
+                      color: "var(--ink5)",
+                      marginLeft: 4,
+                    }}
+                  >
+                    · auto-generated from name · API rowKey
+                  </span>
+                </div>
+                <input
+                  className={inputCls}
+                  style={{
+                    ...roStyle,
+                    fontFamily: '"DM Mono",monospace',
+                    fontSize: 11,
+                    color: "var(--p)",
+                    background: "var(--pp,#f0edff)",
+                  }}
+                  value={form.inferenceType}
+                  readOnly
+                  tabIndex={-1}
+                />
+              </div>
+              <div style={{ marginTop: 10 }}>
+                <div className="il-field-lbl-edit">
+                  InferenceDefinition{" "}
+                  <span
+                    style={{
+                      fontSize: 9,
+                      fontWeight: 500,
+                      color: "var(--ink5)",
+                      marginLeft: 4,
+                    }}
+                  >
+                    · sent to the LLM
+                  </span>
+                </div>
+                <textarea
+                  className="il-edit-ta"
+                  style={{ height: 68 }}
+                  value={form.inferenceDefinition}
+                  placeholder="Describe what this inference detects…"
+                  onChange={(e) => set("inferenceDefinition", e.target.value)}
+                />
+              </div>
+              {/* Phase / Force / SortOrder — editable for new */}
               <div
                 style={{
-                  fontSize: "9.5px",
-                  fontWeight: 700,
-                  letterSpacing: ".07em",
-                  textTransform: "uppercase",
-                  color: "var(--ink5)",
-                  marginBottom: 4,
+                  display: "grid",
+                  gridTemplateColumns: "1fr 1fr 80px",
+                  gap: 10,
+                  marginTop: 10,
                 }}
               >
-                Phase
+                <div>
+                  <div className="il-field-lbl-edit">Phase</div>
+                  <select
+                    className="sv-select il-edit-input"
+                    style={{ width: "100%", minWidth: 0 }}
+                    value={form.phase}
+                    onChange={(e) => set("phase", e.target.value)}
+                  >
+                    <option value="qualification">qualification</option>
+                    <option value="shaping">shaping</option>
+                    <option value="development">development</option>
+                    <option value="closing">closing</option>
+                  </select>
+                </div>
+                <div>
+                  <div className="il-field-lbl-edit">PrimaryForce</div>
+                  <select
+                    className="sv-select il-edit-input"
+                    style={{ width: "100%", minWidth: 0 }}
+                    value={form.primaryForce}
+                    onChange={(e) => set("primaryForce", e.target.value)}
+                  >
+                    {["Artha", "Laya", "Kriya", "Gati", "Rasa"].map((f) => (
+                      <option key={f} value={f}>
+                        {f}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <div className="il-field-lbl-edit">SortOrder</div>
+                  <input
+                    className={`${inputCls} il-edit-input`}
+                    type="number"
+                    style={{ textAlign: "center" }}
+                    value={form.sortOrder}
+                    onChange={(e) => set("sortOrder", Number(e.target.value))}
+                  />
+                </div>
               </div>
-              <input
-                className={inputCls}
-                style={roStyle}
-                value={form.phase}
-                readOnly
-              />
-            </div>
-            <div>
+            </>
+          ) : (
+            <>
+              <ROFieldRow
+                label="InferenceType"
+                hint="API rowKey — cannot be changed"
+              >
+                <input
+                  className={inputCls}
+                  style={roStyle}
+                  value={form.inferenceType}
+                  readOnly
+                />
+              </ROFieldRow>
+              <ROFieldRow label="InferenceName">
+                <input
+                  className={inputCls}
+                  style={roStyle}
+                  value={form.inferenceName}
+                  readOnly
+                />
+              </ROFieldRow>
+              <ROFieldRow
+                label="InferenceDefinition"
+                hint="Semantic definition sent to the LLM"
+              >
+                <textarea
+                  className={inputCls}
+                  style={roTaStyle}
+                  value={form.inferenceDefinition}
+                  readOnly
+                />
+              </ROFieldRow>
+              {/* Phase / Force / SortOrder row */}
               <div
                 style={{
-                  fontSize: "9.5px",
-                  fontWeight: 700,
-                  letterSpacing: ".07em",
-                  textTransform: "uppercase",
-                  color: "var(--ink5)",
-                  marginBottom: 4,
+                  display: "grid",
+                  gridTemplateColumns: "1fr 1fr 80px",
+                  gap: 10,
+                  marginTop: 10,
                 }}
               >
-                PrimaryForce
+                {[
+                  { lbl: "Phase", val: form.phase },
+                  { lbl: "PrimaryForce", val: form.primaryForce },
+                  { lbl: "SortOrder", val: String(form.sortOrder) },
+                ].map(({ lbl, val }) => (
+                  <div key={lbl}>
+                    <div className="il-field-lbl-ro">{lbl}</div>
+                    <input
+                      className={inputCls}
+                      style={{
+                        ...roStyle,
+                        textAlign: lbl === "SortOrder" ? "center" : "left",
+                      }}
+                      value={val}
+                      readOnly
+                    />
+                  </div>
+                ))}
               </div>
-              <input
-                className={inputCls}
-                style={roStyle}
-                value={form.primaryForce}
-                readOnly
-              />
-            </div>
-            <div>
-              <div
-                style={{
-                  fontSize: "9.5px",
-                  fontWeight: 700,
-                  letterSpacing: ".07em",
-                  textTransform: "uppercase",
-                  color: "var(--ink5)",
-                  marginBottom: 4,
-                }}
-              >
-                SortOrder
-              </div>
-              <input
-                className={inputCls}
-                style={{ ...roStyle, textAlign: "center" }}
-                value={form.sortOrder}
-                readOnly
-              />
-            </div>
-          </div>
+            </>
+          )}
 
           {/* ── EDITABLE: Scoring ── */}
-          <Divider
-            label="Scoring · ThresholdScore · Weight · IsGateInference · Enabled"
-            editable
-          />
+          <EditSection label="Scoring · adjust thresholds, weights and flags" />
+
           <div
             style={{
               display: "grid",
@@ -392,22 +606,11 @@ function EditDrawer({
             }}
           >
             <div>
-              <div
-                style={{
-                  fontSize: "9.5px",
-                  fontWeight: 700,
-                  letterSpacing: ".07em",
-                  textTransform: "uppercase",
-                  color: "var(--ink5)",
-                  marginBottom: 4,
-                }}
-              >
-                ThresholdScore
-              </div>
+              <div className="il-field-lbl-edit">ThresholdScore</div>
               <input
-                className={inputCls}
-                style={{ width: "100%", minWidth: 0, textAlign: "center" }}
+                className={`${inputCls} il-edit-input`}
                 type="number"
+                style={{ textAlign: "center" }}
                 value={form.thresholdScore}
                 onChange={(e) => set("thresholdScore", Number(e.target.value))}
               />
@@ -418,23 +621,12 @@ function EditDrawer({
               </div>
             </div>
             <div>
-              <div
-                style={{
-                  fontSize: "9.5px",
-                  fontWeight: 700,
-                  letterSpacing: ".07em",
-                  textTransform: "uppercase",
-                  color: "var(--ink5)",
-                  marginBottom: 4,
-                }}
-              >
-                Weight
-              </div>
+              <div className="il-field-lbl-edit">Weight</div>
               <input
-                className={inputCls}
-                style={{ width: "100%", minWidth: 0, textAlign: "center" }}
+                className={`${inputCls} il-edit-input`}
                 type="number"
                 step="0.1"
+                style={{ textAlign: "center" }}
                 value={form.weight}
                 onChange={(e) => set("weight", Number(e.target.value))}
               />
@@ -445,20 +637,9 @@ function EditDrawer({
               </div>
             </div>
             <div>
-              <div
-                style={{
-                  fontSize: "9.5px",
-                  fontWeight: 700,
-                  letterSpacing: ".07em",
-                  textTransform: "uppercase",
-                  color: "var(--ink5)",
-                  marginBottom: 4,
-                }}
-              >
-                IsGateInference
-              </div>
+              <div className="il-field-lbl-edit">IsGateInference</div>
               <select
-                className="sv-select"
+                className="sv-select il-edit-input"
                 style={{ width: "100%", minWidth: 0 }}
                 value={form.isGateInference ? "yes" : "no"}
                 onChange={(e) =>
@@ -470,126 +651,153 @@ function EditDrawer({
               </select>
             </div>
             <div>
-              <div
-                style={{
-                  fontSize: "9.5px",
-                  fontWeight: 700,
-                  letterSpacing: ".07em",
-                  textTransform: "uppercase",
-                  color: "var(--ink5)",
-                  marginBottom: 4,
-                }}
-              >
-                Enabled
-              </div>
+              <div className="il-field-lbl-edit">Enabled</div>
               <select
-                className="sv-select"
-                style={{ width: "100%", minWidth: 0 }}
+                className="sv-select il-edit-input"
+                style={{
+                  width: "100%",
+                  minWidth: 0,
+                  fontWeight: 700,
+                  color: form.enabled
+                    ? "var(--ok, #166534)"
+                    : "var(--wa, #B91C1C)",
+                }}
                 value={form.enabled ? "yes" : "no"}
                 onChange={(e) => set("enabled", e.target.value === "yes")}
               >
-                <option value="yes">yes</option>
-                <option value="no">no</option>
+                <option value="yes">✓ enabled</option>
+                <option value="no">✕ disabled</option>
               </select>
+              <div
+                style={{
+                  marginTop: 4,
+                  fontSize: 10,
+                  padding: "2px 7px",
+                  borderRadius: 5,
+                  textAlign: "center",
+                  fontWeight: 600,
+                  background: form.enabled ? "#DCFCE7" : "#FEE2E2",
+                  color: form.enabled ? "#166534" : "#991B1B",
+                }}
+              >
+                Currently {form.enabled ? "active" : "inactive"}
+              </div>
             </div>
           </div>
 
-          {/* ── READ-ONLY: Evidence guidance ── */}
-          <Divider label="Evidence guidance · used by LLM" />
-          <FieldRow label="PositiveEvidenceGuidance" hint="Read-only">
-            <textarea
-              className={inputCls}
-              style={roTaStyle}
-              value={form.positiveEvidenceGuidance}
-              readOnly
-            />
-          </FieldRow>
-          <FieldRow label="NegativeEvidenceGuidance" hint="Read-only">
-            <textarea
-              className={inputCls}
-              style={roTaStyle}
-              value={form.negativeEvidenceGuidance}
-              readOnly
-            />
-          </FieldRow>
+          {/* ── EVIDENCE GUIDANCE: editable for new, read-only for edit ── */}
+          {inf._isNew ? (
+            <EditSection label="Evidence guidance · used by the LLM at scoring time" />
+          ) : (
+            <ROSection label="Evidence guidance · used by the LLM at scoring time" />
+          )}
+
+          {inf._isNew ? (
+            <>
+              <div style={{ marginTop: 10 }}>
+                <div className="il-field-lbl-edit">
+                  PositiveEvidenceGuidance
+                </div>
+                <textarea
+                  className="il-edit-ta"
+                  style={{ height: 60 }}
+                  value={form.positiveEvidenceGuidance}
+                  placeholder="Signals that confirm this inference is true…"
+                  onChange={(e) =>
+                    set("positiveEvidenceGuidance", e.target.value)
+                  }
+                />
+              </div>
+              <div style={{ marginTop: 10 }}>
+                <div className="il-field-lbl-edit">
+                  NegativeEvidenceGuidance
+                </div>
+                <textarea
+                  className="il-edit-ta"
+                  style={{ height: 60 }}
+                  value={form.negativeEvidenceGuidance}
+                  placeholder="Signals that contradict or weaken this inference…"
+                  onChange={(e) =>
+                    set("negativeEvidenceGuidance", e.target.value)
+                  }
+                />
+              </div>
+            </>
+          ) : (
+            <>
+              <ROFieldRow label="PositiveEvidenceGuidance">
+                <textarea
+                  className={inputCls}
+                  style={roTaStyle}
+                  value={form.positiveEvidenceGuidance}
+                  readOnly
+                />
+              </ROFieldRow>
+              <ROFieldRow label="NegativeEvidenceGuidance">
+                <textarea
+                  className={inputCls}
+                  style={roTaStyle}
+                  value={form.negativeEvidenceGuidance}
+                  readOnly
+                />
+              </ROFieldRow>
+            </>
+          )}
 
           {/* ── EDITABLE: Question variants ── */}
-          <Divider
-            label="Question variants · selected at runtime via QuestionStrategy"
-            editable
-          />
-          <FieldRow label="DefaultQuestion">
-            <textarea
-              className={inputCls}
-              style={editTaSmStyle}
-              value={form.defaultQuestion}
-              onChange={(e) => set("defaultQuestion", e.target.value)}
-            />
-          </FieldRow>
-          <FieldRow label="SoftQuestion">
-            <textarea
-              className={inputCls}
-              style={editTaSmStyle}
-              value={form.softQuestion}
-              onChange={(e) => set("softQuestion", e.target.value)}
-            />
-          </FieldRow>
-          <FieldRow label="DirectQuestion">
-            <textarea
-              className={inputCls}
-              style={editTaSmStyle}
-              value={form.directQuestion}
-              onChange={(e) => set("directQuestion", e.target.value)}
-            />
-          </FieldRow>
-          <FieldRow label="ExecutiveQuestion">
-            <textarea
-              className={inputCls}
-              style={editTaSmStyle}
-              value={form.executiveQuestion}
-              onChange={(e) => set("executiveQuestion", e.target.value)}
-            />
-          </FieldRow>
-          <FieldRow label="ProcurementQuestion">
-            <textarea
-              className={inputCls}
-              style={editTaSmStyle}
-              value={form.procurementQuestion}
-              onChange={(e) => set("procurementQuestion", e.target.value)}
-            />
-          </FieldRow>
-          <FieldRow label="RenewalQuestion">
-            <textarea
-              className={inputCls}
-              style={editTaSmStyle}
-              value={form.renewalQuestion}
-              onChange={(e) => set("renewalQuestion", e.target.value)}
-            />
-          </FieldRow>
+          <EditSection label="Question variants · selected at runtime via QuestionStrategy" />
+
+          {(
+            [
+              { key: "defaultQuestion", label: "DefaultQuestion" },
+              { key: "softQuestion", label: "SoftQuestion" },
+              { key: "directQuestion", label: "DirectQuestion" },
+              { key: "executiveQuestion", label: "ExecutiveQuestion" },
+              { key: "procurementQuestion", label: "ProcurementQuestion" },
+              { key: "renewalQuestion", label: "RenewalQuestion" },
+            ] as { key: keyof InferenceDef; label: string }[]
+          ).map(({ key, label }) => (
+            <div key={key} style={{ marginTop: 10 }}>
+              <div className="il-field-lbl-edit">{label}</div>
+              <textarea
+                className="il-edit-ta"
+                value={form[key] as string}
+                onChange={(e) => set(key, e.target.value)}
+              />
+            </div>
+          ))}
         </div>
 
         {/* Footer */}
         <div
           style={{
-            padding: "10px 18px",
+            padding: "12px 18px",
             borderTop: "0.5px solid var(--brd)",
             display: "flex",
             gap: 8,
-            justifyContent: "flex-end",
+            justifyContent: "space-between",
+            alignItems: "center",
             background: "var(--bg2)",
             flexShrink: 0,
           }}
         >
-          <button className="btn" onClick={onClose} disabled={saving}>
-            Cancel
-          </button>
-          <button
-            className="btn pri"
-            onClick={() => onSave(form)}
-            disabled={saving}
-          >
-            {saving ? "Saving…" : "Save changes"}
-          </button>
+          <span style={{ fontSize: 10.5, color: "var(--ink5)" }}>
+            {inf._isNew
+              ? "Fill in all fields to create this inference"
+              : "Scoring + Question variants are editable"}
+          </span>
+          <div style={{ display: "flex", gap: 8 }}>
+            <button className="btn" onClick={onClose} disabled={saving}>
+              Cancel
+            </button>
+            <button
+              className="btn pri"
+              onClick={() => onSave(form)}
+              disabled={saving}
+            >
+              {saving ? "Saving…" : "Save changes"}
+            </button>
+          </div>
         </div>
       </div>
     </div>
@@ -1125,6 +1333,8 @@ export default function PanelInferenceLibrary() {
               /api/inference-library/&#123;phase&#125;/&#123;id&#125;
             </span>
           </div>
+
+          {/* ── Restored: + New Inference button ── */}
           <div
             style={{
               marginLeft: "auto",
@@ -1145,6 +1355,35 @@ export default function PanelInferenceLibrary() {
                 {inferences.length} inferences
               </span>
             )}
+            <button
+              className="btn pri"
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: 5,
+                height: 28,
+                padding: "0 11px",
+                fontSize: 11.5,
+                fontWeight: 600,
+              }}
+              disabled={loading}
+              onClick={() => setEditTarget(blankInference())}
+            >
+              <svg
+                width="11"
+                height="11"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2.5"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              >
+                <line x1="12" y1="5" x2="12" y2="19" />
+                <line x1="5" y1="12" x2="19" y2="12" />
+              </svg>
+              New Inference
+            </button>
           </div>
         </div>
 

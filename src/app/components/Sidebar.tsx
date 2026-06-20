@@ -1320,7 +1320,7 @@ const Sidebar: React.FC<SidebarProps> = ({
   };
 
   const today: NavItem[] = [
-    { id: "pulse", name: "Log Stream", ic: "activity", kind: "alert" },
+    { id: "pulse", name: "Pulse Stream", ic: "activity", kind: "alert" },
     {
       id: "inbox",
       name: "Intake",

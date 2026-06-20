@@ -105,6 +105,13 @@ function blobFilename(path: string): string {
   return parts[parts.length - 1] ?? path;
 }
 
+// ─── Normalise processingStatus to lowercase for consistent lookup ────────────
+
+function toLabel(s: string): string {
+  if (!s) return "Unknown";
+  return s.charAt(0).toUpperCase() + s.slice(1).toLowerCase();
+}
+
 function normalise(raw: IntakeItem): IntakeItem {
   const intakeId = raw.rowKey ?? raw.id ?? raw.partitionKey ?? "";
   const parsed = parseContent(raw.content ?? "");
@@ -121,6 +128,8 @@ function normalise(raw: IntakeItem): IntakeItem {
     opportunityId: raw.opportunityId?.trim() || null,
     ...parsed,
     _subject: raw.title?.trim() || parsed._subject,
+    // ✅ Normalise to lowercase so STATUS_META lookups always work
+    processingStatus: (raw.processingStatus ?? "").toLowerCase().trim(),
   };
 }
 
@@ -134,6 +143,21 @@ const STATUS_META: Record<string, { label: string; cls: string; dot: string }> =
     ignored: { label: "Ignored", cls: "mu", dot: "#8b8fa8" },
     failed: { label: "Failed", cls: "ri", dot: "#d94040" },
   };
+
+// ✅ Dynamic fallback for any status not in STATUS_META (e.g. "hold", "newa", future values)
+function getStatusMeta(status: string): {
+  label: string;
+  cls: string;
+  dot: string;
+} {
+  return (
+    STATUS_META[status] ?? {
+      label: toLabel(status),
+      cls: "mu",
+      dot: "#8b8fa8",
+    }
+  );
+}
 
 const PROVIDER_LABEL: Record<string, string> = {
   gmail: "Gmail",
@@ -279,9 +303,7 @@ const SkeletonDetail = () => (
 
 // ─── Confidence Bar ───────────────────────────────────────────────────────────
 
-// REPLACE the ConfidenceBar component entirely
 const ConfidenceBar: React.FC<{ value: number }> = ({ value }) => {
-  // API returns 0-100 integer (e.g. 90), NOT 0-1 float
   const pct = Math.round(value);
   const color =
     pct >= 75
@@ -548,6 +570,7 @@ const ClassificationPanel: React.FC<{ item: IntakeItem }> = ({ item }) => {
     </div>
   );
 };
+
 // ─── Source Section ───────────────────────────────────────────────────────────
 
 const SourceSection: React.FC<{ item: IntakeItem }> = ({ item }) => {
@@ -602,7 +625,6 @@ const SourceSection: React.FC<{ item: IntakeItem }> = ({ item }) => {
         {item.receivedAt ?? "—"}
       </span>,
     ],
-    // ✅ createdBy row — shows the fullName from login response
     [
       "Created By",
       <span
@@ -836,7 +858,8 @@ const ListRow: React.FC<{
   selected: boolean;
   onClick: () => void;
 }> = ({ item, selected, onClick }) => {
-  const sm = STATUS_META[item.processingStatus] ?? STATUS_META.processed;
+  // ✅ Uses getStatusMeta — handles known + unknown statuses
+  const sm = getStatusMeta(item.processingStatus);
   const isPending = !item.commercialIntent && item.confidence === 0;
   const isCalendar = item._contentType === "calendar";
   const isCommercial = item.commercialIntent;
@@ -924,7 +947,8 @@ const DetailHeader: React.FC<{
   onIgnore: () => void;
   onConvert: () => void;
 }> = ({ item, onIgnore, onConvert }) => {
-  const sm = STATUS_META[item.processingStatus] ?? STATUS_META.processed;
+  // ✅ Uses getStatusMeta
+  const sm = getStatusMeta(item.processingStatus);
   const providerDisplay = getProviderDisplay(item);
   return (
     <div className="itk-slidein-hero">
@@ -1647,9 +1671,10 @@ const IntakeDetailPanel: React.FC<{
     [panelWidth],
   );
 
+  // ✅ Uses getStatusMeta for the detail panel too
   const sm = detail
-    ? (STATUS_META[detail.processingStatus] ?? STATUS_META.processed)
-    : STATUS_META.processed;
+    ? getStatusMeta(detail.processingStatus)
+    : getStatusMeta("processed");
 
   const linkedCount =
     (detail?.accountId ? 1 : 0) + (detail?.opportunityId ? 1 : 0);
@@ -1864,7 +1889,7 @@ const IntakeDetailPanel: React.FC<{
               </div>
             </div>
 
-            {/* Classification inline — always visible */}
+            {/* Classification inline */}
             <ClassificationPanel item={detail} />
 
             {/* Action row */}
@@ -1989,12 +2014,11 @@ const IntakeDetailPanel: React.FC<{
             <div
               style={{ padding: "14px 18px", animation: "fadeUp .18s ease" }}
             >
-              {/* ── SUMMARY TAB ── */}
+              {/* ── CONTENT TAB ── */}
               {tab === "content" && (
                 <div
                   style={{ display: "flex", flexDirection: "column", gap: 10 }}
                 >
-                  {/* Full content */}
                   <div
                     style={{
                       borderRadius: 10,
@@ -2071,7 +2095,6 @@ const IntakeDetailPanel: React.FC<{
                     </div>
                   </div>
 
-                  {/* Attachments */}
                   {(detail.attachments?.length ?? 0) > 0 && (
                     <div
                       style={{
@@ -2201,7 +2224,6 @@ const IntakeDetailPanel: React.FC<{
                 <div
                   style={{ display: "flex", flexDirection: "column", gap: 10 }}
                 >
-                  {/* 2-col grid for quick-scan metadata */}
                   <div
                     style={{
                       display: "grid",
@@ -2313,7 +2335,6 @@ const IntakeDetailPanel: React.FC<{
                     ))}
                   </div>
 
-                  {/* Blob links */}
                   {(detail.contentBlobUrl || detail.mailBlobUrl) && (
                     <div
                       style={{
@@ -2511,10 +2532,10 @@ const IntakeDetailPanel: React.FC<{
     </>
   );
 };
+
 // ─── Main Component ───────────────────────────────────────────────────────────
 
 const IntakeView: React.FC = () => {
-  // ✅ Pull fullName from login response via AuthContext
   const { fullName } = useAuth();
   const actorName = fullName ?? "";
 
@@ -2988,7 +3009,6 @@ const IntakeView: React.FC = () => {
           )}
         </div>
 
-        {/* ══ Slide-in detail — passes actorName (fullName from login) ══ */}
         {selId && (
           <IntakeDetailPanel
             selId={selId}

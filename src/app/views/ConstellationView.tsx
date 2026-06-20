@@ -4,6 +4,7 @@ import { Sparkline } from "../components/Shared";
 import { STAGES, avBg, initials, fmt$ } from "../data";
 import NewOpportunityPanel from "../components/NewOpportunity";
 import AccountDetailPanel from "../components/AccountDetailPanel";
+import OpportunityDetailPanel from "./OpportunityDetailPanel";
 import { baseUrl, apiFetch } from "../utils/utils";
 import { getToken } from "../../services/api";
 import { createPortal } from "react-dom";
@@ -244,10 +245,11 @@ const constStyles = `
 .cv-hint-ic{color:var(--p);flex-shrink:0}
 
 /* Kanban */
-.kb-wrap{flex:1;display:flex;flex-direction:column;overflow:hidden;background:var(--bg,#f8fafc)}
-.kb-scroll{flex:1;overflow-x:auto;overflow-y:hidden;padding:16px 20px 20px}
-.kb-cols{display:flex;gap:13px;height:100%;min-width:max-content}
-.kb-col{display:flex;flex-direction:column;width:252px;flex-shrink:0;border-radius:14px;background:rgba(255,255,255,0.78);border:1px solid rgba(0,0,0,0.06);overflow:hidden;transition:box-shadow .2s,opacity .2s,border-color .2s;box-shadow:0 1px 4px rgba(15,23,42,0.05)}
+.kb-wrap{flex:1;display:flex;flex-direction:column;overflow:hidden;background:var(--bg,#f8fafc);height:100%}
+
+.kb-scroll{flex:1;overflow:hidden;padding:16px 20px 20px;width:100%;box-sizing:border-box;display:flex;flex-direction:column}
+.kb-cols{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:13px;flex:1;min-height:0;width:100%;box-sizing:border-box}
+.kb-col{display:flex;flex-direction:column;min-width:0;border-radius:14px;background:rgba(255,255,255,0.78);border:1px solid rgba(0,0,0,0.06);overflow:hidden;transition:box-shadow .2s,opacity .2s,border-color .2s;box-shadow:0 1px 4px rgba(15,23,42,0.05)}
 .kb-col.can-drop{box-shadow:0 0 0 1.5px rgba(99,102,241,0.35),0 6px 24px rgba(99,102,241,0.10);border-color:rgba(99,102,241,0.20)}
 .kb-col.no-drop{opacity:0.38;filter:saturate(0.45)}
 .kb-col-head{display:flex;align-items:center;gap:8px;padding:11px 13px 10px;border-bottom:1px solid rgba(0,0,0,0.055);background:rgba(255,255,255,0.88);position:relative}
@@ -256,7 +258,7 @@ const constStyles = `
 .kb-col-title{font-size:10.5px;font-weight:700;letter-spacing:.07em;text-transform:uppercase;color:#334155;flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .kb-col-count{font-size:10px;font-weight:600;color:var(--col-accent,#94a3b8);background:var(--col-badge-bg,rgba(148,163,184,.10));border:1px solid var(--col-badge-brd,rgba(148,163,184,.28));border-radius:20px;padding:1.5px 8px;font-family:"DM Mono",monospace;flex-shrink:0}
 .kb-col-sum{font-size:9.5px;font-family:"DM Mono",monospace;color:var(--ink5);flex-shrink:0;margin-left:2px}
-.kb-cards{flex:1;padding:9px 8px 11px;display:flex;flex-direction:column;gap:7px;overflow-y:auto;min-height:420px;transition:background .2s;position:relative}
+.kb-cards{flex:1;padding:9px 8px 11px;display:flex;flex-direction:column;gap:7px;overflow-y:auto;min-height:0;transition:background .2s;position:relative}
 .kb-cards.drop-active{background:rgba(99,102,241,0.045);border-radius:0 0 12px 12px}
 .kb-drop-indicator{display:none;align-items:center;justify-content:center;border:1.5px dashed rgba(99,102,241,.42);border-radius:9px;height:50px;color:rgba(99,102,241,.7);font-size:10.5px;font-weight:500;gap:5px;animation:pulse-drop 1.4s ease-in-out infinite;background:rgba(99,102,241,.025);flex-shrink:0}
 .kb-cards.drop-active .kb-drop-indicator{display:flex}
@@ -1347,7 +1349,7 @@ const ConstellationListView: React.FC<{
 type CvModeLocal = "constellation" | "kanban" | "list";
 
 const ConstellationView: React.FC = () => {
-  const [mode, setMode] = React.useState<CvModeLocal>("list");
+  const [mode, setMode] = React.useState<CvModeLocal>("kanban");
   const [showOpportunityPanel, setShowOpportunityPanel] = React.useState(false);
   const [openAcc, setOpenAcc] = React.useState<string | null>(null);
   const [openOpp, setOpenOpp] = React.useState<Opportunity | null>(null);
@@ -1593,254 +1595,32 @@ const ConstellationView: React.FC = () => {
 
         {/* ── Opportunity Detail Drawer ── */}
         {openOpp && (
-          <>
-            <div
-              style={{
-                position: "absolute",
-                inset: 0,
-                background: "rgba(20,18,40,.32)",
-                backdropFilter: "blur(3px)",
-                WebkitBackdropFilter: "blur(3px)",
-                zIndex: 29,
-                animation: "bdIn .18s ease",
-              }}
-              onClick={() => setOpenOpp(null)}
-            />
-            <div
-              style={{
-                position: "absolute",
-                top: 0,
-                right: 0,
-                bottom: 0,
-                width: oppPanelWidth,
-                minWidth: 320,
-                maxWidth: "90%",
-                background: "var(--bg2)",
-                borderLeft: "0.5px solid var(--brd)",
-                boxShadow: "-8px 0 40px rgba(60,50,150,.16)",
-                zIndex: 30,
-                display: "flex",
-                flexDirection: "column",
-                animation: "slideInRight .22s cubic-bezier(.4,0,.2,1)",
-              }}
-            >
-              {/* Resize handle */}
-              <div
-                style={{
-                  position: "absolute",
-                  left: 0,
-                  top: 0,
-                  bottom: 0,
-                  width: 5,
-                  cursor: "ew-resize",
-                  zIndex: 31,
-                }}
-                onMouseDown={(e) => {
-                  e.preventDefault();
-                  const startX = e.clientX,
-                    startW = oppPanelWidth;
-                  const onMove = (mv: MouseEvent) =>
-                    setOppPanelWidth(
-                      Math.max(
-                        320,
-                        Math.min(
-                          window.innerWidth * 0.9,
-                          startW + (startX - mv.clientX),
-                        ),
-                      ),
-                    );
-                  const onUp = () => {
-                    window.removeEventListener("mousemove", onMove);
-                    window.removeEventListener("mouseup", onUp);
-                  };
-                  window.addEventListener("mousemove", onMove);
-                  window.addEventListener("mouseup", onUp);
-                }}
-              />
-              {/* Bar */}
-              <div
-                style={{
-                  height: 50,
-                  display: "flex",
-                  alignItems: "center",
-                  gap: 8,
-                  padding: "0 16px",
-                  borderBottom: "0.5px solid var(--brd)",
-                  flexShrink: 0,
-                  background: "var(--bg2)",
-                }}
-              >
-                <button className="ic-btn sm" onClick={() => setOpenOpp(null)}>
-                  <Icon name="x" size={13} />
-                </button>
-                <span
-                  style={{
-                    fontFamily: "DM Mono",
-                    fontSize: 11,
-                    color: "var(--ink4)",
-                  }}
-                >
-                  {openOpp.id}
-                </span>
-                <div style={{ marginLeft: "auto", display: "flex", gap: 6 }}>
-                  <button className="btn sm">
-                    <Icon name="sparkles" size={12} /> Ask Zotra
-                  </button>
-                  <button className="btn sm">
-                    <Icon name="mail" size={12} /> Email
-                  </button>
-                </div>
-              </div>
-              {/* Content */}
-              <div style={{ flex: 1, overflowY: "auto", padding: 20 }}>
-                <div style={{ marginBottom: 16 }}>
-                  <div
-                    style={{
-                      fontFamily: "Sora,sans-serif",
-                      fontSize: 18,
-                      fontWeight: 700,
-                      letterSpacing: "-0.02em",
-                      color: "var(--ink)",
-                      marginBottom: 6,
-                    }}
-                  >
-                    {openOpp.name}
-                  </div>
-                  <div
-                    style={{
-                      display: "flex",
-                      alignItems: "center",
-                      gap: 8,
-                      flexWrap: "wrap",
-                      fontSize: 12,
-                      color: "var(--ink4)",
-                    }}
-                  >
-                    <span className={"stage-chip " + openOpp.stage}>
-                      {openOpp.phase || openOpp.stage}
-                    </span>
-                    <span className={"heat-bub heat-" + openOpp.heat}>
-                      <span className={"heat-dot " + openOpp.heat} />
-                      {openOpp.heat}
-                    </span>
-                    <span>·</span>
-                    <span
-                      style={{
-                        fontWeight: 600,
-                        color: "var(--ink)",
-                        fontSize: 13,
-                      }}
-                    >
-                      ${openOpp.value.toLocaleString()}
-                    </span>
-                  </div>
-                </div>
-                <div
-                  style={{
-                    display: "grid",
-                    gridTemplateColumns: "repeat(3,1fr)",
-                    gap: 8,
-                    marginBottom: 16,
-                  }}
-                >
-                  {[
-                    {
-                      l: "Deal value",
-                      v: `$${openOpp.value.toLocaleString()}`,
-                    },
-                    { l: "Days in stage", v: `${openOpp.cycle}d` },
-                    { l: "Health score", v: `${openOpp.health}%` },
-                    { l: "Deal type", v: openOpp.dealType || "—" },
-                    { l: "Panchashakti", v: `${openOpp.panchashaktiScore}` },
-                    { l: "Last touch", v: openOpp.lastTouch || "—" },
-                  ].map(({ l, v }) => (
-                    <div
-                      key={l}
-                      style={{
-                        background: "var(--bg3)",
-                        border: "0.5px solid var(--brd)",
-                        borderRadius: 9,
-                        padding: "10px 12px",
-                      }}
-                    >
-                      <div
-                        style={{
-                          fontSize: 9,
-                          fontWeight: 700,
-                          textTransform: "uppercase",
-                          letterSpacing: ".08em",
-                          color: "var(--ink5)",
-                          marginBottom: 4,
-                        }}
-                      >
-                        {l}
-                      </div>
-                      <div
-                        style={{
-                          fontFamily: "Sora,sans-serif",
-                          fontSize: 16,
-                          fontWeight: 700,
-                          color: "var(--ink)",
-                          letterSpacing: "-0.02em",
-                        }}
-                      >
-                        {v}
-                      </div>
-                    </div>
-                  ))}
-                </div>
-                <div
-                  style={{
-                    background: "var(--bg3)",
-                    border: "0.5px solid var(--brd)",
-                    borderRadius: 10,
-                    padding: "12px 14px",
-                    marginBottom: 12,
-                  }}
-                >
-                  <div
-                    style={{
-                      fontSize: 10,
-                      fontWeight: 700,
-                      textTransform: "uppercase",
-                      letterSpacing: ".08em",
-                      color: "var(--ink5)",
-                      marginBottom: 6,
-                    }}
-                  >
-                    Intent signal
-                  </div>
-                  <div style={{ fontSize: 13, color: "var(--ink2)" }}>
-                    {openOpp.intent || "No intent signals detected."}
-                  </div>
-                </div>
-                <div
-                  style={{
-                    background: "var(--pu)",
-                    border: "0.5px solid var(--brd)",
-                    borderRadius: 10,
-                    padding: "12px 14px",
-                  }}
-                >
-                  <div
-                    style={{
-                      fontSize: 10,
-                      fontWeight: 700,
-                      textTransform: "uppercase",
-                      letterSpacing: ".08em",
-                      color: "var(--ink5)",
-                      marginBottom: 6,
-                    }}
-                  >
-                    Status
-                  </div>
-                  <div style={{ fontSize: 13, color: "var(--ink2)" }}>
-                    {openOpp.status || "—"}
-                  </div>
-                </div>
-              </div>
-            </div>
-          </>
+          <OpportunityDetailPanel
+            opp={openOpp}
+            onClose={() => setOpenOpp(null)}
+            panelWidth={oppPanelWidth}
+            onResizeStart={(e) => {
+              e.preventDefault();
+              const startX = e.clientX;
+              const startW = oppPanelWidth;
+              const onMove = (mv: MouseEvent) =>
+                setOppPanelWidth(
+                  Math.max(
+                    320,
+                    Math.min(
+                      window.innerWidth * 0.9,
+                      startW + (startX - mv.clientX),
+                    ),
+                  ),
+                );
+              const onUp = () => {
+                window.removeEventListener("mousemove", onMove);
+                window.removeEventListener("mouseup", onUp);
+              };
+              window.addEventListener("mousemove", onMove);
+              window.addEventListener("mouseup", onUp);
+            }}
+          />
         )}
       </div>
     </>
