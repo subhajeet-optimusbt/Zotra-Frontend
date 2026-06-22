@@ -127,8 +127,8 @@ export const INT_STYLES = `
 .int-drw-head { padding: 15px 18px; border-bottom: 1px solid var(--brd); display: flex; align-items: center; gap: 10px; flex-shrink: 0; }
 .int-drw-icon { width: 30px; height: 30px; border-radius: 7px; display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
 .int-drw-title { font-size: 13px; font-weight: 700; color: var(--ink); letter-spacing: -.02em; flex: 1; font-family: 'Geist', sans-serif; }
-.int-drw-close { width: 26px; height: 26px; border-radius: 6px; cursor: pointer; border: 1px solid var(--brd); background: var(--bg3); display: flex; align-items: center; justify-content: center; color: var(--ink5); transition: all var(--t); }
-.int-drw-close:hover { background: var(--bg3); border-color: var(--brd3); color: var(--ink); }
+.int-drw-close { width: 26px; height: 26px; border-radius: 6px; cursor: pointer; border: none; background: #4B48C8; display: flex; align-items: center; justify-content: center; color: #fff; transition: filter var(--t); box-shadow: 0 1px 3px rgba(75,72,200,.30); }
+.int-drw-close:hover { filter: brightness(.88); }
 .int-drw-body { flex: 1; overflow-y: auto; padding: 18px; scrollbar-width: thin; scrollbar-color: var(--brd) transparent; }
 .int-drw-foot { padding: 12px 18px; border-top: 1px solid var(--brd); display: flex; gap: 7px; justify-content: flex-end; }
 

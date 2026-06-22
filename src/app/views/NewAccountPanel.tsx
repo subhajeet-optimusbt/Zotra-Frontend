@@ -17,8 +17,8 @@ const NAP_CSS = `
 .nap-hdr-icon { width:40px; height:40px; border-radius:12px; flex-shrink:0; background:var(--pg); display:flex; align-items:center; justify-content:center; box-shadow:0 4px 14px rgba(85,82,201,.30); position:relative; z-index:1; }
 .nap-hdr-title { font-size:16px; font-weight:700; color:var(--ink); letter-spacing:-.025em; margin-bottom:2px; }
 .nap-hdr-sub   { font-size:11px; color:var(--ink5); font-family:"DM Mono",monospace; }
-.nap-close { margin-left:auto; width:28px; height:28px; border-radius:8px; border:0.5px solid var(--brd); background:var(--bg2); cursor:pointer; display:flex; align-items:center; justify-content:center; color:var(--ink5); font-size:16px; line-height:1; transition:all .15s; flex-shrink:0; z-index:1; }
-.nap-close:hover { background:var(--bg3); color:var(--ink); border-color:var(--brd3); }
+.nap-close { margin-left:auto; width:28px; height:28px; border-radius:8px; border:none; background:#4B48C8; cursor:pointer; display:flex; align-items:center; justify-content:center; color:#fff; font-size:16px; line-height:1; transition:filter .15s; flex-shrink:0; z-index:1; box-shadow:0 1px 3px rgba(75,72,200,.30); }
+.nap-close:hover { filter:brightness(.88); }
 
 .nap-steps { display:flex; align-items:center; padding:13px 20px; border-bottom:0.5px solid var(--brd); flex-shrink:0; background:var(--bg2); gap:0; }
 .nap-step { display:flex; align-items:center; gap:6px; flex:1; position:relative; }

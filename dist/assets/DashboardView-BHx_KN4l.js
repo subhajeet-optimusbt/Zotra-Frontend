@@ -1,4 +1,4 @@
-import{d as m,j as e}from"./vendor-react-DTmZBiFG.js";import{I as d}from"./AppShell-tc70GgXT.js";import"./index-DV5jNSqv.js";import"./api-BV-Sjtc4.js";import"./vendor-icons-BGVXKQIZ.js";const x=`
+import{d as m,j as e}from"./vendor-react-DTmZBiFG.js";import{I as d}from"./AppShell-D-qosF_w.js";import"./index-Cntfpldn.js";import"./api-C65-Ddf2.js";import"./vendor-icons-BGVXKQIZ.js";const x=`
 .zdb-body{flex:1;overflow-y:auto;padding:18px 24px 96px;background:var(--bg3)}
 .zdb-metrics{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px;margin-bottom:14px}
 .zdb-card{background:var(--bg2);border:.5px solid var(--brd);border-radius:var(--r-l);box-shadow:var(--sh-s);overflow:hidden;margin-bottom:12px}

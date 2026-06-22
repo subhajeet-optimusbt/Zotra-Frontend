@@ -167,8 +167,7 @@ export default function Login() {
     }
 
     setLaunchLoading(true);
-    const refreshToken = localStorage.getItem("zotra_refresh_token") ?? "";
-    setTokens(token, refreshToken);
+    // Tokens are already in localStorage from the original login — no need to re-save
 
     setAuth(
       String(savedSession.userId),

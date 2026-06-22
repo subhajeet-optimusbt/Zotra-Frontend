@@ -1683,15 +1683,28 @@ const IntakeDetailPanel: React.FC<{
     <>
       <div className="itk-backdrop" onClick={onClose} />
       <div className="itk-slidein on" style={{ width: panelWidth }}>
-        <div
-          className="itk-resize-handle"
-          onMouseDown={onResizeMouseDown}
-          title="Drag to resize"
-        />
+        <div className="odp-resize" onMouseDown={onResizeMouseDown}>
+          <div className="odp-resize-grip">
+            <div className="odp-resize-dot" />
+            <div className="odp-resize-dot" />
+            <div className="odp-resize-dot" />
+          </div>
+          <span className="odp-resize-hint">Drag to resize</span>
+        </div>
 
         {/* ── Top bar ── */}
         <div className="itk-slidein-bar">
-          <button className="ic-btn sm" onClick={onClose} title="Close">
+          <button
+            className="ic-btn sm"
+            onClick={onClose}
+            title="Close"
+            style={{
+              background: "#4B48C8",
+              color: "#fff",
+              border: "none",
+              boxShadow: "0 1px 3px rgba(75,72,200,.30)",
+            }}
+          >
             <Icon name="x" size={13} />
           </button>
           <span
@@ -1947,38 +1960,66 @@ const IntakeDetailPanel: React.FC<{
           <div
             style={{
               display: "flex",
-              gap: 0,
-              padding: "0 18px",
+              gap: 1,
+              padding: "0 12px",
               borderBottom: "0.5px solid var(--brd)",
               background: "var(--bg2)",
               flexShrink: 0,
             }}
           >
-            {(["content", "source", "linked"] as const).map((t) => {
-              const labels: Record<string, string> = {
-                content: "Content",
-                source: "Source",
-                linked: `Linked Objects (${linkedCount})`,
-              };
+            {(
+              [
+                { id: "content", label: "Content", icon: "file-text" },
+                { id: "source", label: "Source", icon: "link" },
+                {
+                  id: "linked",
+                  label: `Linked Objects (${linkedCount})`,
+                  icon: "git-branch",
+                },
+              ] as const
+            ).map((t) => {
+              const on = tab === (t.id as typeof tab);
               return (
                 <button
-                  key={t}
-                  onClick={() => setTab(t)}
+                  key={t.id}
+                  onClick={() => setTab(t.id as typeof tab)}
                   style={{
-                    padding: "9px 12px 8px",
+                    display: "inline-flex",
+                    alignItems: "center",
+                    gap: 6,
+                    height: 40,
+                    padding: "0 10px",
                     fontSize: 11.5,
-                    fontWeight: tab === t ? 700 : 500,
-                    color: tab === t ? "var(--p)" : "var(--ink4)",
-                    background: "none",
+                    fontWeight: on ? 700 : 500,
+                    color: on ? "#4B48C8" : "var(--ink4)",
+                    background: on ? "rgba(75,72,200,0.07)" : "transparent",
                     border: "none",
+                    borderBottom: `2.5px solid ${on ? "#4B48C8" : "transparent"}`,
+                    borderRadius: "6px 6px 0 0",
                     cursor: "pointer",
-                    borderBottom: `2px solid ${tab === t ? "var(--p)" : "transparent"}`,
                     fontFamily: "inherit",
-                    transition: "all .12s",
-                    marginBottom: -1,
+                    transition: "color .12s, background .12s",
+                    position: "relative",
+                    top: "0.5px",
+                    whiteSpace: "nowrap",
                   }}
                 >
-                  {labels[t]}
+                  <span
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      width: 18,
+                      height: 18,
+                      borderRadius: 5,
+                      flexShrink: 0,
+                      background: on ? "rgba(75,72,200,0.14)" : "transparent",
+                      transition: "background .12s",
+                    }}
+                  >
+                    <Icon name={t.icon} size={12} />
+                  </span>
+                  {t.label}
                 </button>
               );
             })}

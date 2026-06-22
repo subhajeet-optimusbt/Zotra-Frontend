@@ -319,52 +319,117 @@ const ODP_CSS = `
 @keyframes odp-slide-in{from{transform:translateX(100%);opacity:0}to{transform:translateX(0);opacity:1}}
 @keyframes odp-bd-in{from{opacity:0}to{opacity:1}}
 @keyframes odp-sk-pulse{0%,100%{opacity:.45}50%{opacity:.9}}
+@keyframes odp-handle-appear{0%{opacity:0;transform:translateX(4px)}60%{opacity:1;transform:translateX(-2px)}100%{opacity:.7;transform:translateX(0)}}
+@keyframes odp-handle-pulse{0%,100%{opacity:.55}50%{opacity:1}}
 
 .odp-backdrop{position:absolute;inset:0;background:rgba(20,18,40,.32);backdrop-filter:blur(3px);-webkit-backdrop-filter:blur(3px);z-index:29;animation:odp-bd-in .18s ease;}
-.odp-panel{position:absolute;top:0;right:0;bottom:0;background:var(--bg,#fff);border-left:0.5px solid var(--brd,#e2e8f0);box-shadow:-8px 0 40px rgba(60,50,150,.16);z-index:30;display:flex;flex-direction:column;overflow:hidden;animation:odp-slide-in .22s cubic-bezier(.4,0,.2,1);}
-.odp-resize{position:absolute;left:0;top:0;bottom:0;width:5px;cursor:ew-resize;z-index:31;}
 
-/* Top bar */
-.odp-topbar{height:48px;display:flex;align-items:center;gap:8px;padding:0 16px;border-bottom:0.5px solid var(--brd,#e2e8f0);flex-shrink:0;background:var(--bg,#fff);}
-.odp-close-btn{width:28px;height:28px;display:flex;align-items:center;justify-content:center;border-radius:7px;border:0.5px solid var(--brd2,#dde1ea);background:transparent;cursor:pointer;color:var(--ink4,#6b7280);flex-shrink:0;transition:background .12s,color .12s;}
-.odp-close-btn:hover{background:var(--bg3);color:var(--ink);}
-.odp-opp-id{font-family:"DM Mono",monospace;font-size:10px;color:var(--ink5,#9399a8);letter-spacing:0.04em;flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
-.odp-act-btn{display:inline-flex;align-items:center;gap:5px;height:30px;padding:0 14px;border-radius:8px;background:#4B48C8;color:#fff;font-size:12px;font-weight:600;letter-spacing:-0.01em;border:none;cursor:pointer;flex-shrink:0;box-shadow:0 1px 2px rgba(75,72,200,.25),0 4px 12px rgba(75,72,200,.22);transition:filter .13s;}
+/* Panel — fills parent height, no overflow on the panel itself */
+.odp-panel{
+  position:absolute;top:0;right:0;bottom:0;
+  background:var(--bg,#fff);
+  border-left:0.5px solid var(--brd,#e2e8f0);
+  box-shadow:-8px 0 40px rgba(60,50,150,.16);
+  z-index:30;
+  display:flex;flex-direction:column;
+  overflow:hidden;
+  animation:odp-slide-in .22s cubic-bezier(.4,0,.2,1);
+}
+
+/* ── Resize handle — now visually obvious ── */
+.odp-resize{
+  position:absolute;left:0;top:0;bottom:0;width:16px;
+  cursor:ew-resize;z-index:31;
+  display:flex;align-items:center;justify-content:center;
+}
+/* The grip strip itself */
+.odp-resize-grip{
+  display:flex;flex-direction:column;align-items:center;justify-content:center;
+  gap:3px;
+  width:16px;height:48px;
+  border-radius:0 6px 6px 0;
+  background:rgba(75,72,200,0.06);
+  border:0.5px solid rgba(75,72,200,0.14);
+  border-left:none;
+  transition:background .15s,border-color .15s;
+  animation:odp-handle-appear .5s ease .3s both;
+}
+.odp-resize:hover .odp-resize-grip{
+  background:rgba(75,72,200,0.14);
+  border-color:rgba(75,72,200,0.30);
+}
+.odp-resize-dot{
+  width:3px;height:3px;border-radius:50%;
+  background:#4B48C8;opacity:.5;
+  animation:odp-handle-pulse 2s ease-in-out infinite;
+}
+.odp-resize-dot:nth-child(2){animation-delay:.25s;}
+.odp-resize-dot:nth-child(3){animation-delay:.5s;}
+/* Tooltip hint — shows once on mount */
+.odp-resize-hint{
+  position:absolute;left:20px;top:50%;transform:translateY(-50%);
+  background:rgba(30,27,60,.88);color:#fff;
+  font-size:10px;font-weight:500;letter-spacing:.02em;
+  padding:4px 8px;border-radius:5px;white-space:nowrap;
+  pointer-events:none;
+  opacity:0;
+  transition:opacity .2s;
+}
+.odp-resize-hint::before{
+  content:"";position:absolute;left:-4px;top:50%;transform:translateY(-50%);
+  width:0;height:0;border-top:4px solid transparent;border-bottom:4px solid transparent;
+  border-right:4px solid rgba(30,27,60,.88);
+}
+.odp-resize:hover .odp-resize-hint{opacity:1;}
+
+/* ── Header (replaces topbar + old hdr split) ── */
+.odp-hdr{
+  padding:12px 16px 0;
+  border-bottom:0.5px solid var(--brd,#e2e8f0);
+  flex-shrink:0;
+  background:var(--bg,#fff);
+}
+.odp-hdr-top{
+  display:flex;align-items:center;gap:8px;
+  margin-bottom:10px;
+}
+.odp-av{width:36px;height:36px;border-radius:10px;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:700;color:#fff;flex-shrink:0;}
+.odp-hdr-name-block{flex:1;min-width:0;}
+.odp-name{font-family:"Sora",sans-serif;font-size:14px;font-weight:700;letter-spacing:-0.02em;color:var(--ink,#0f1117);line-height:1.2;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.odp-meta{font-size:10.5px;color:var(--ink5,#9399a8);margin-top:1px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.odp-hdr-actions{display:flex;align-items:center;gap:6px;flex-shrink:0;}
+.odp-act-btn{display:inline-flex;align-items:center;gap:5px;height:28px;padding:0 12px;border-radius:8px;background:#4B48C8;color:#fff;font-size:11.5px;font-weight:600;letter-spacing:-0.01em;border:none;cursor:pointer;flex-shrink:0;box-shadow:0 1px 2px rgba(75,72,200,.25),0 4px 12px rgba(75,72,200,.22);transition:filter .13s;}
 .odp-act-btn:hover{filter:brightness(.9);}
-
-/* Header */
-.odp-hdr{padding:14px 18px 0;border-bottom:0.5px solid var(--brd,#e2e8f0);flex-shrink:0;background:var(--bg,#fff);}
-.odp-hdr-row{display:flex;align-items:center;gap:10px;margin-bottom:12px;}
-.odp-av{width:38px;height:38px;border-radius:10px;display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:700;color:#fff;flex-shrink:0;}
-.odp-name{font-family:"Sora",sans-serif;font-size:15px;font-weight:700;letter-spacing:-0.02em;color:var(--ink,#0f1117);line-height:1.2;}
-.odp-meta{font-size:11px;color:var(--ink5,#9399a8);margin-top:2px;}
+.odp-close-btn{width:26px;height:26px;display:flex;align-items:center;justify-content:center;border-radius:7px;border:none;background:#4B48C8;cursor:pointer;color:#fff;flex-shrink:0;transition:filter .12s;box-shadow:0 1px 3px rgba(75,72,200,.30);}
+.odp-close-btn:hover{filter:brightness(.88);}
+.odp-opp-id{font-family:"DM Mono",monospace;font-size:9px;color:var(--ink5,#9399a8);letter-spacing:0.04em;margin-top:1px;}
 
 /* Stats */
-.odp-stats{display:grid;grid-template-columns:repeat(4,1fr);border:0.5px solid var(--brd,#e2e8f0);border-radius:10px;overflow:hidden;margin:0 0 14px;}
-.odp-stat{padding:9px 12px;border-right:0.5px solid var(--brd,#e2e8f0);}
+.odp-stats{display:grid;grid-template-columns:repeat(4,1fr);border:0.5px solid var(--brd,#e2e8f0);border-radius:10px;overflow:hidden;margin:0 0 12px;}
+.odp-stat{padding:8px 10px;border-right:0.5px solid var(--brd,#e2e8f0);}
 .odp-stat:last-child{border-right:none;}
-.odp-stat-l{font-size:8.5px;font-weight:700;letter-spacing:.10em;text-transform:uppercase;color:var(--ink5,#9399a8);margin-bottom:4px;}
-.odp-stat-v{font-family:"Sora",sans-serif;font-size:14px;font-weight:700;letter-spacing:-0.02em;color:var(--ink,#0f1117);line-height:1;}
+.odp-stat-l{font-size:8.5px;font-weight:700;letter-spacing:.10em;text-transform:uppercase;color:var(--ink5,#9399a8);margin-bottom:3px;}
+.odp-stat-v{font-family:"Sora",sans-serif;font-size:13px;font-weight:700;letter-spacing:-0.02em;color:var(--ink,#0f1117);line-height:1;}
 .odp-stat-v.pscore{color:#4B48C8;}
 .odp-stat-v.heat-hot{color:#E5566C;}
 .odp-stat-v.heat-warm{color:#D97757;}
 .odp-stat-v.heat-cool{color:#4B6FDB;}
 
 /* Stepper */
-.odp-stepper{display:flex;align-items:center;padding:12px 18px 14px;gap:0;flex-shrink:0;}
+.odp-stepper{display:flex;align-items:center;padding:10px 16px 12px;gap:0;flex-shrink:0;}
 .odp-step{display:flex;flex-direction:column;align-items:center;gap:4px;flex:1;}
-.odp-step-circle{width:26px;height:26px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:10.5px;font-weight:700;border:2px solid var(--brd2,#dde1ea);background:var(--bg3,#f1f3f7);color:var(--ink5,#9399a8);position:relative;z-index:2;flex-shrink:0;transition:background .2s,border-color .2s,color .2s;}
+.odp-step-circle{width:24px;height:24px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:700;border:2px solid var(--brd2,#dde1ea);background:var(--bg3,#f1f3f7);color:var(--ink5,#9399a8);position:relative;z-index:2;flex-shrink:0;transition:background .2s,border-color .2s,color .2s;}
 .odp-step-circle.active{background:#4B48C8;border-color:#4B48C8;color:#fff;box-shadow:0 0 0 3px rgba(75,72,200,.18);}
 .odp-step-circle.done{background:rgba(75,72,200,.09);border-color:rgba(75,72,200,.30);color:#4B48C8;}
-.odp-step-label{font-size:9px;font-weight:500;color:var(--ink5);white-space:nowrap;}
+.odp-step-label{font-size:8.5px;font-weight:500;color:var(--ink5);white-space:nowrap;}
 .odp-step-label.active{font-weight:700;color:#4B48C8;}
-.odp-step-line{flex:1;height:2px;background:var(--brd2,#dde1ea);margin-bottom:13px;transition:background .2s;}
+.odp-step-line{flex:1;height:2px;background:var(--brd2,#dde1ea);margin-bottom:12px;transition:background .2s;}
 .odp-step-line.done{background:rgba(75,72,200,.30);}
 
 /* Warning */
-.odp-warn{margin:0 18px 12px;background:#fffbeb;border:0.5px solid #f5d878;border-radius:9px;padding:8px 12px;display:flex;align-items:center;gap:10px;flex-shrink:0;}
+.odp-warn{margin:0 16px 10px;background:#fffbeb;border:0.5px solid #f5d878;border-radius:9px;padding:7px 12px;display:flex;align-items:center;gap:10px;flex-shrink:0;}
 .odp-warn-ic{color:#d97706;flex-shrink:0;display:flex;align-items:center;}
-.odp-warn-txt{font-size:11.5px;color:#78540e;flex:1;font-weight:500;}
+.odp-warn-txt{font-size:11px;color:#78540e;flex:1;font-weight:500;}
 .odp-warn-btn{font-size:11px;font-weight:600;color:#78540e;border:0.5px solid #d4a309;border-radius:6px;padding:3px 9px;background:transparent;cursor:pointer;white-space:nowrap;flex-shrink:0;transition:background .12s;}
 .odp-warn-btn:hover{background:rgba(245,216,120,.25);}
 
@@ -373,8 +438,8 @@ const ODP_CSS = `
 .odp-tabs::-webkit-scrollbar{display:none;}
 .odp-tab{
   display:inline-flex;align-items:center;gap:6px;
-  height:42px;padding:0 12px;
-  font-size:12px;font-weight:500;
+  height:40px;padding:0 10px;
+  font-size:11.5px;font-weight:500;
   color:var(--ink4,#6b7280);
   border:none;background:transparent;cursor:pointer;
   border-bottom:2.5px solid transparent;
@@ -391,7 +456,7 @@ const ODP_CSS = `
 }
 .odp-tab .odp-tab-icon{
   display:flex;align-items:center;justify-content:center;
-  width:20px;height:20px;border-radius:5px;
+  width:18px;height:18px;border-radius:5px;
   background:transparent;
   transition:background .12s;
   flex-shrink:0;
@@ -400,15 +465,21 @@ const ODP_CSS = `
 .odp-tab.active .odp-tab-icon{background:rgba(75,72,200,0.14);}
 .odp-tab-badge{
   display:inline-flex;align-items:center;justify-content:center;
-  min-width:17px;height:16px;padding:0 4px;
+  min-width:15px;height:15px;padding:0 4px;
   border-radius:99px;
   background:#E5566C;color:#fff;
-  font-size:8.5px;font-weight:700;line-height:1;
+  font-size:8px;font-weight:700;line-height:1;
 }
 .odp-tab.active .odp-tab-badge{background:#4B48C8;}
 
-/* Body */
-.odp-body{flex:1;overflow-y:auto;padding:16px 18px 28px;}
+/* Body — takes all remaining height, scrolls internally */
+.odp-body{
+  flex:1;
+  overflow-y:auto;
+  overflow-x:hidden;
+  padding:14px 16px 24px;
+  min-height:0;
+}
 .odp-body::-webkit-scrollbar{width:4px;}
 .odp-body::-webkit-scrollbar-thumb{background:rgba(0,0,0,.10);border-radius:99px;}
 
@@ -1042,38 +1113,42 @@ const OpportunityDetailPanel: React.FC<Props> = ({
         className="odp-panel"
         style={{ width: panelWidth, minWidth: 320, maxWidth: "90%" }}
       >
-        <div className="odp-resize" onMouseDown={onResizeStart} />
+        {/* ── Resize handle — visually obvious grip ── */}
+        <div className="odp-resize" onMouseDown={onResizeStart}>
+          <div className="odp-resize-grip">
+            <div className="odp-resize-dot" />
+            <div className="odp-resize-dot" />
+            <div className="odp-resize-dot" />
+          </div>
+          <span className="odp-resize-hint">Drag to resize</span>
+        </div>
 
-        {/* Top bar */}
-        {/* <div className="odp-topbar">
-          <button className="odp-close-btn" onClick={onClose} aria-label="Close">
-            <Icon name="x" size={13} />
-          </button>
-          <span className="odp-opp-id">{opp.id}</span>
-          <button className="odp-act-btn">
-            <svg width="12" height="12" viewBox="0 0 16 16" fill="none">
-              <path d="M8 1l1.8 3.6L14 5.8l-3 2.9.7 4.1L8 10.7l-3.7 2.1.7-4.1L2 5.8l4.2-.6L8 1z" fill="currentColor" />
-            </svg>
-            Act
-          </button>
-        </div> */}
-
-        {/* Header */}
-        {/* <div className="odp-hdr">
-          <div className="odp-hdr-row">
-            <div className={"odp-av " + avBg(displayName)}>{initials(displayName)}</div>
-            <div style={{ flex: 1, minWidth: 0 }}>
+        {/* ── Header (no separate topbar — close + act live here) ── */}
+        <div className="odp-hdr">
+          <div className="odp-hdr-top">
+            <div className={"odp-av " + avBg(displayName)}>
+              {initials(displayName)}
+            </div>
+            <div className="odp-hdr-name-block">
               <div className="odp-name">{displayName}</div>
-              <div className="odp-meta">
-                {domain} · {industry}
-                {account?.accountType ? ` · ${account.accountType}` : ""}
-              </div>
+            </div>
+            <div className="odp-hdr-actions">
+              <button
+                className="odp-close-btn"
+                onClick={onClose}
+                aria-label="Close"
+              >
+                <Icon name="x" size={12} />
+              </button>
             </div>
           </div>
+
           <div className="odp-stats">
             <div className="odp-stat">
               <div className="odp-stat-l">Value</div>
-              <div className="odp-stat-v">{displayValue && displayValue > 0 ? fmt$(displayValue) : "—"}</div>
+              <div className="odp-stat-v">
+                {displayValue && displayValue > 0 ? fmt$(displayValue) : "—"}
+              </div>
             </div>
             <div className="odp-stat">
               <div className="odp-stat-l">Panchashakti</div>
@@ -1081,25 +1156,37 @@ const OpportunityDetailPanel: React.FC<Props> = ({
             </div>
             <div className="odp-stat">
               <div className="odp-stat-l">Stage Days</div>
-              <div className="odp-stat-v">{opp.cycle > 0 ? `${opp.cycle}d` : "—"}</div>
+              <div className="odp-stat-v">
+                {opp.cycle > 0 ? `${opp.cycle}d` : "—"}
+              </div>
             </div>
             <div className="odp-stat">
               <div className="odp-stat-l">Heat</div>
               <div className={`odp-stat-v heat-${opp.heat}`}>{heatLabel}</div>
             </div>
           </div>
-        </div> */}
+        </div>
 
         {/* Stepper */}
-        {/* <Stepper currentStage={displayStage} /> */}
+        <Stepper currentStage={displayStage} />
 
         {/* Warning */}
-        {/* {openGaps.length > 0 && (
+        {openGaps.length > 0 && (
           <div className="odp-warn">
             <span className="odp-warn-ic">
               <svg width="14" height="14" viewBox="0 0 16 16" fill="none">
-                <path d="M8 1.5L14.5 13.5H1.5L8 1.5z" stroke="currentColor" strokeWidth="1.4" strokeLinejoin="round" />
-                <path d="M8 6.5v3M8 11.5v.5" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" />
+                <path
+                  d="M8 1.5L14.5 13.5H1.5L8 1.5z"
+                  stroke="currentColor"
+                  strokeWidth="1.4"
+                  strokeLinejoin="round"
+                />
+                <path
+                  d="M8 6.5v3M8 11.5v.5"
+                  stroke="currentColor"
+                  strokeWidth="1.3"
+                  strokeLinecap="round"
+                />
               </svg>
             </span>
             <span className="odp-warn-txt">
@@ -1107,9 +1194,14 @@ const OpportunityDetailPanel: React.FC<Props> = ({
                 ? `Not ready to advance — ${criticalGaps.length} critical gap${criticalGaps.length > 1 ? "s" : ""} unresolved`
                 : `${openGaps.length} open gap${openGaps.length > 1 ? "s" : ""} require attention`}
             </span>
-            <button className="odp-warn-btn" onClick={() => setActiveTab("gaps")}>View gaps</button>
+            <button
+              className="odp-warn-btn"
+              onClick={() => setActiveTab("gaps")}
+            >
+              View gaps
+            </button>
           </div>
-        )} */}
+        )}
 
         {/* Tabs */}
         <div className="odp-tabs" role="tablist">
@@ -1134,7 +1226,7 @@ const OpportunityDetailPanel: React.FC<Props> = ({
           })}
         </div>
 
-        {/* Body */}
+        {/* Body — flex:1, overflow-y:auto, no page-level scroll */}
         <div className="odp-body">
           {loading && <LoadingSkeleton />}
 

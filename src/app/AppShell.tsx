@@ -8,6 +8,7 @@ import { SimpleView } from "./views/OtherViews";
 import { useUserProfile } from "./types/userProfile";
 import type { ViewType, Tweaks, ColorScheme } from "./types";
 import { baseUrl } from "./utils/utils";
+import { startTokenRefreshTimer } from "../services/api";
 import { useAuth } from "../context/AuthContext";
 import ZotraChatbot from "./components/ZotraChatbot";
 // ─── Lazy-loaded views ────────────────────────────────────────────────────────
@@ -25,7 +26,7 @@ const WorkspaceBoardView = lazy(
 const DashboardView = lazy(() => import("./views/DashboardView"));
 const ReportsView = lazy(() => import("./views/ReportsView"));
 const SettingsView = lazy(() => import("./views/SettingsView"));
-const ProfileView = lazy(() => import("./views/ProfileView"))
+const ProfileView = lazy(() => import("./views/ProfileView"));
 const JourneyView = lazy(() => import("./views/JourneyView"));
 const AutomationView = lazy(() => import("./views/AutomationView"));
 const QuickStartView = lazy(() => import("./views/QuickStartView"));
@@ -181,7 +182,9 @@ export default function AppShell() {
   const [tweaks, setTweaks] = useState<Tweaks>(DEFAULT_TWEAKS);
   const [tweaksPanelOpen, setTweaksPanelOpen] = useState(false);
   const [navCounts, setNavCounts] = useState<Record<string, number>>({});
-  const [settingsPanel, setSettingsPanel] = useState<string | undefined>(undefined);
+  const [settingsPanel, setSettingsPanel] = useState<string | undefined>(
+    undefined,
+  );
 
   const { orgName, orgLogoUrl, orgPlan, orgColor } = useAuth();
 
@@ -214,6 +217,14 @@ export default function AppShell() {
     if (profileError)
       console.error("[App] Failed to load user profile:", profileError);
   }, [profileError]);
+
+  // ── Background token refresh ─────────────────────────────────────────────
+  // Silently calls POST /auth/refresh every 30 minutes so the session never
+  // expires while the user is actively using the app.
+  useEffect(() => {
+    const stopRefresh = startTokenRefreshTimer();
+    return () => stopRefresh();
+  }, []);
 
   useEffect(() => {
     const token = localStorage.getItem("zotra_token");

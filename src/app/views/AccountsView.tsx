@@ -305,11 +305,14 @@ const accountsStyles = `
 .acc-detail{position:absolute;right:0;top:0;bottom:0;width:520px;min-width:320px;max-width:90%;background:var(--bg2);border-left:0.5px solid var(--brd);display:flex;flex-direction:column;overflow:hidden;z-index:20;box-shadow:-8px 0 40px rgba(60,50,150,.16);animation:slideInPanel .2s cubic-bezier(.4,0,.2,1)}
 .acc-d-bar{height:46px;display:flex;align-items:center;gap:8px;padding:0 14px;border-bottom:0.5px solid var(--brd);flex-shrink:0;background:var(--bg2)}
 .acc-d-hero-wrap{padding:14px 16px 12px;border-bottom:0.5px solid var(--brd);flex-shrink:0;background:var(--bg2)}
-.acc-d-tabs{display:flex;flex-direction:row;border-bottom:0.5px solid var(--brd);flex-shrink:0;padding:0 6px;background:var(--bg2);overflow-x:auto;scrollbar-width:none}
+.acc-d-tabs{display:flex;flex-direction:row;border-bottom:0.5px solid var(--brd);flex-shrink:0;padding:0 12px;background:var(--bg2);overflow-x:auto;scrollbar-width:none;gap:1px}
 .acc-d-tabs::-webkit-scrollbar{display:none}
-.acc-d-tab{display:inline-flex;flex-direction:row;align-items:center;gap:5px;padding:10px 14px;font-size:11.5px;font-weight:600;color:var(--ink4);cursor:pointer;border-bottom:2px solid transparent;margin-bottom:-1px;transition:color .12s,border-color .12s;white-space:nowrap;user-select:none;flex-shrink:0;line-height:1}
-.acc-d-tab:hover{color:var(--ink2)}
-.acc-d-tab.on{color:var(--p);border-bottom-color:var(--p)}
+.acc-d-tab{display:inline-flex;flex-direction:row;align-items:center;gap:6px;height:40px;padding:0 10px;font-size:11.5px;font-weight:500;color:var(--ink4);cursor:pointer;border:none;background:transparent;border-bottom:2.5px solid transparent;position:relative;top:0.5px;transition:color .12s,background .12s;white-space:nowrap;user-select:none;flex-shrink:0;line-height:1;font-family:inherit;border-radius:6px 6px 0 0}
+.acc-d-tab:hover{color:var(--ink);background:rgba(75,72,200,0.05)}
+.acc-d-tab.on{color:#4B48C8;font-weight:700;border-bottom-color:#4B48C8;background:rgba(75,72,200,0.07)}
+.acc-d-tab-icon{display:flex;align-items:center;justify-content:center;width:18px;height:18px;border-radius:5px;background:transparent;transition:background .12s;flex-shrink:0}
+.acc-d-tab:hover .acc-d-tab-icon{background:rgba(75,72,200,0.08)}
+.acc-d-tab.on .acc-d-tab-icon{background:rgba(75,72,200,0.14)}
 .acc-d-scroll{flex:1;overflow-y:auto;overflow-x:hidden;padding:14px 14px 24px;min-height:0;overscroll-behavior:contain}
 `;
 
@@ -711,19 +714,15 @@ const AccountDetail: React.FC<{ accountId: string; onClose: () => void }> = ({
           animation: "slideInPanel .2s cubic-bezier(.4,0,.2,1)",
         }}
       >
-        {/* Resize handle */}
-        <div
-          style={{
-            position: "absolute",
-            left: 0,
-            top: 0,
-            bottom: 0,
-            width: 5,
-            cursor: "ew-resize",
-            zIndex: 21,
-          }}
-          onMouseDown={onResizeMouseDown}
-        />
+        {/* Resize handle — ODP-style visible grip */}
+        <div className="odp-resize" onMouseDown={onResizeMouseDown}>
+          <div className="odp-resize-grip">
+            <div className="odp-resize-dot" />
+            <div className="odp-resize-dot" />
+            <div className="odp-resize-dot" />
+          </div>
+          <span className="odp-resize-hint">Drag to resize</span>
+        </div>
 
         {/* Action bar */}
         <div
@@ -738,7 +737,16 @@ const AccountDetail: React.FC<{ accountId: string; onClose: () => void }> = ({
             background: "var(--bg2)",
           }}
         >
-          <button className="ic-btn sm" onClick={onClose}>
+          <button
+            className="ic-btn sm"
+            onClick={onClose}
+            style={{
+              background: "#4B48C8",
+              color: "#fff",
+              border: "none",
+              boxShadow: "0 1px 3px rgba(75,72,200,.30)",
+            }}
+          >
             <Icon name="x" size={13} />
           </button>
           <span
@@ -952,10 +960,12 @@ const AccountDetail: React.FC<{ accountId: string; onClose: () => void }> = ({
                     className={"acc-d-tab" + (on ? " on" : "")}
                     onClick={() => setTab(t.id)}
                   >
-                    <Icon
-                      name={t.icon as Parameters<typeof Icon>[0]["name"]}
-                      size={11}
-                    />
+                    <span className="acc-d-tab-icon">
+                      <Icon
+                        name={t.icon as Parameters<typeof Icon>[0]["name"]}
+                        size={12}
+                      />
+                    </span>
                     {t.label}
                     {t.count !== undefined && t.count > 0 && (
                       <span
@@ -963,15 +973,15 @@ const AccountDetail: React.FC<{ accountId: string; onClose: () => void }> = ({
                           display: "inline-flex",
                           alignItems: "center",
                           justifyContent: "center",
-                          minWidth: 16,
-                          height: 16,
+                          minWidth: 15,
+                          height: 15,
                           padding: "0 4px",
-                          fontSize: 9,
+                          fontSize: 8,
                           fontFamily: '"DM Mono",monospace',
                           fontWeight: 700,
-                          background: on ? "var(--p)" : "var(--pp)",
-                          color: on ? "#fff" : "var(--p)",
-                          borderRadius: 8,
+                          background: on ? "#4B48C8" : "rgba(75,72,200,0.12)",
+                          color: on ? "#fff" : "#4B48C8",
+                          borderRadius: 99,
                           lineHeight: 1,
                         }}
                       >
@@ -1488,229 +1498,412 @@ const AccountDetail: React.FC<{ accountId: string; onClose: () => void }> = ({
                 </div>
               )}
 
-              {tab === "activities" && (
-                <div
-                  style={{ display: "flex", flexDirection: "column", gap: 8 }}
-                >
-                  <div
-                    style={{
-                      fontSize: 9,
-                      fontWeight: 700,
-                      letterSpacing: ".1em",
-                      textTransform: "uppercase",
-                      color: "var(--ink5)",
-                      display: "flex",
-                      alignItems: "center",
-                      gap: 5,
-                      marginBottom: 4,
-                    }}
-                  >
-                    <Icon name="clock" size={12} />
-                    Account timeline
-                  </div>
-                  <div style={{ paddingLeft: 18, position: "relative" }}>
+              {tab === "activities" &&
+                (() => {
+                  // Build a unified sorted feed
+                  type FeedItem = {
+                    key: string;
+                    type:
+                      | "account_created"
+                      | "last_touch"
+                      | "opportunity"
+                      | "intake";
+                    title: string;
+                    desc?: string;
+                    time?: string;
+                    chips?: { label: string; cls: string }[];
+                    iconName: string;
+                    iconCls: string;
+                  };
+
+                  const feed: FeedItem[] = [];
+
+                  if (acc.createdAt) {
+                    feed.push({
+                      key: "acc-created",
+                      type: "account_created",
+                      title: "Account created",
+                      desc: [acc.source, acc.accountType]
+                        .filter(Boolean)
+                        .join(" · "),
+                      time: acc.createdAt,
+                      chips: acc.source
+                        ? [{ label: acc.source, cls: "source" }]
+                        : [],
+                      iconName: "building-2",
+                      iconCls: "green",
+                    });
+                  }
+
+                  opps.forEach((o: any) => {
+                    feed.push({
+                      key: o.rowKey ?? o.id ?? Math.random().toString(),
+                      type: "opportunity",
+                      title: "Opportunity opened",
+                      desc: [o.workspaceName, o.currentPhase]
+                        .filter(Boolean)
+                        .join(" · "),
+                      time: o.createdAt,
+                      chips: [
+                        o.currentPhase
+                          ? { label: o.currentPhase, cls: "" }
+                          : null,
+                        o.stage ? { label: o.stage, cls: "source" } : null,
+                      ].filter(Boolean) as { label: string; cls: string }[],
+                      iconName: "briefcase",
+                      iconCls: "purple",
+                    });
+                    if (o.updatedAt && o.updatedAt !== o.createdAt) {
+                      feed.push({
+                        key: (o.rowKey ?? o.id ?? "") + "-upd",
+                        type: "opportunity",
+                        title: "Opportunity updated",
+                        desc: o.workspaceName,
+                        time: o.updatedAt,
+                        chips: o.currentPhase
+                          ? [{ label: o.currentPhase, cls: "" }]
+                          : [],
+                        iconName: "refresh-cw",
+                        iconCls: "blue",
+                      });
+                    }
+                  });
+
+                  intakes.forEach((item: any) => {
+                    feed.push({
+                      key: item.rowKey ?? item.id ?? Math.random().toString(),
+                      type: "intake",
+                      title: "Intake signal",
+                      desc: item.title ?? item.subject,
+                      time: item.createdAt,
+                      chips: [
+                        item.intakeType
+                          ? {
+                              label: item.intakeType.replace(/_/g, " "),
+                              cls: "agent",
+                            }
+                          : null,
+                        item.confidenceLevel
+                          ? { label: item.confidenceLevel, cls: "" }
+                          : null,
+                      ].filter(Boolean) as { label: string; cls: string }[],
+                      iconName: "mail",
+                      iconCls: "blue",
+                    });
+                  });
+
+                  if (acc.lastTouchAt) {
+                    feed.push({
+                      key: "last-touch",
+                      type: "last_touch",
+                      title: "Last touch recorded",
+                      time: acc.lastTouchAt,
+                      chips: [],
+                      iconName: "hand",
+                      iconCls: "",
+                    });
+                  }
+
+                  // Sort newest-first
+                  feed.sort((a, b) => {
+                    if (!a.time) return 1;
+                    if (!b.time) return -1;
+                    return (
+                      new Date(b.time).getTime() - new Date(a.time).getTime()
+                    );
+                  });
+
+                  const totalItems = feed.length;
+
+                  return (
                     <div
                       style={{
-                        position: "absolute",
-                        left: 5,
-                        top: 6,
-                        bottom: 6,
-                        width: 1.5,
-                        background: "var(--brd2)",
-                      }}
-                    />
-                    <div
-                      style={{
-                        position: "relative",
-                        marginBottom: 12,
-                        fontSize: 12,
-                        color: "var(--ink3)",
-                        lineHeight: 1.5,
+                        border: "0.5px solid var(--brd)",
+                        borderRadius: 10,
+                        overflow: "hidden",
+                        background: "var(--bg)",
                       }}
                     >
+                      {/* Header */}
                       <div
                         style={{
-                          position: "absolute",
-                          left: -16,
-                          top: 4,
-                          width: 7,
-                          height: 7,
-                          borderRadius: "50%",
+                          display: "flex",
+                          alignItems: "center",
+                          justifyContent: "space-between",
+                          padding: "13px 16px",
+                          borderBottom: "0.5px solid var(--brd)",
                           background: "var(--bg2)",
-                          border: "1.5px solid var(--p)",
-                        }}
-                      />
-                      <span style={{ fontWeight: 600, color: "var(--ink)" }}>
-                        Account created
-                      </span>
-                      <span
-                        style={{
-                          fontFamily: '"DM Mono",monospace',
-                          fontSize: 10.5,
-                          color: "var(--ink5)",
-                          marginLeft: 6,
                         }}
                       >
-                        {relTime(acc.createdAt)}
-                      </span>
-                      <div
-                        style={{
-                          fontSize: 11.5,
-                          color: "var(--ink4)",
-                          marginTop: 2,
-                        }}
-                      >
-                        via {acc.source} · {acc.accountType}
+                        <div
+                          style={{
+                            display: "flex",
+                            alignItems: "center",
+                            gap: 8,
+                            fontSize: 14,
+                            fontWeight: 700,
+                            color: "var(--ink)",
+                          }}
+                        >
+                          <svg
+                            width="14"
+                            height="14"
+                            viewBox="0 0 16 16"
+                            fill="none"
+                          >
+                            <circle
+                              cx="8"
+                              cy="8"
+                              r="6.5"
+                              stroke="currentColor"
+                              strokeWidth="1.4"
+                            />
+                            <path
+                              d="M8 5v3.5l2 1.5"
+                              stroke="currentColor"
+                              strokeWidth="1.3"
+                              strokeLinecap="round"
+                            />
+                          </svg>
+                          Account Activity
+                        </div>
+                        <span
+                          style={{
+                            display: "inline-flex",
+                            alignItems: "center",
+                            justifyContent: "center",
+                            padding: "2px 9px",
+                            borderRadius: 20,
+                            fontSize: 10.5,
+                            fontWeight: 600,
+                            color: "var(--ink4)",
+                            background: "var(--bg3)",
+                            border: "0.5px solid var(--brd2)",
+                          }}
+                        >
+                          {totalItems > 0
+                            ? `${totalItems} event${totalItems !== 1 ? "s" : ""}`
+                            : "No events"}
+                        </span>
                       </div>
+
+                      {/* Feed */}
+                      {feed.length > 0 ? (
+                        <div style={{ padding: "8px 0" }}>
+                          {feed.map((item, i) => {
+                            const iconBgMap: Record<string, string> = {
+                              green: "rgba(21,128,61,0.09)",
+                              purple: "rgba(109,40,217,0.10)",
+                              blue: "rgba(29,78,216,0.09)",
+                              red: "rgba(185,28,28,0.09)",
+                            };
+                            const iconClrMap: Record<string, string> = {
+                              green: "#15803d",
+                              purple: "#6d28d9",
+                              blue: "#1d4ed8",
+                              red: "#b91c1c",
+                            };
+                            const iconBrdMap: Record<string, string> = {
+                              green: "rgba(21,128,61,0.18)",
+                              purple: "rgba(109,40,217,0.20)",
+                              blue: "rgba(29,78,216,0.18)",
+                              red: "rgba(185,28,28,0.18)",
+                            };
+                            const chipBgMap: Record<string, string> = {
+                              source: "rgba(75,72,200,0.07)",
+                              agent: "rgba(21,128,61,0.07)",
+                            };
+                            const chipClrMap: Record<string, string> = {
+                              source: "#4B48C8",
+                              agent: "#15803d",
+                            };
+                            const chipBrdMap: Record<string, string> = {
+                              source: "rgba(75,72,200,0.18)",
+                              agent: "rgba(21,128,61,0.18)",
+                            };
+                            const cls = item.iconCls;
+                            const isLast = i === feed.length - 1;
+
+                            return (
+                              <div
+                                key={item.key}
+                                style={{
+                                  display: "flex",
+                                  alignItems: "flex-start",
+                                  gap: 12,
+                                  padding: "11px 16px",
+                                  position: "relative",
+                                  transition: "background .12s",
+                                }}
+                                onMouseEnter={(e) =>
+                                  (e.currentTarget.style.background =
+                                    "var(--bg3)")
+                                }
+                                onMouseLeave={(e) =>
+                                  (e.currentTarget.style.background =
+                                    "transparent")
+                                }
+                              >
+                                {/* Timeline spine */}
+                                {!isLast && (
+                                  <div
+                                    style={{
+                                      position: "absolute",
+                                      left: 40,
+                                      top: 44,
+                                      bottom: -2,
+                                      width: 1.5,
+                                      background:
+                                        "linear-gradient(180deg,var(--brd2) 60%,transparent 100%)",
+                                    }}
+                                  />
+                                )}
+
+                                {/* Icon */}
+                                <div
+                                  style={{
+                                    width: 30,
+                                    height: 30,
+                                    borderRadius: 9,
+                                    flexShrink: 0,
+                                    display: "flex",
+                                    alignItems: "center",
+                                    justifyContent: "center",
+                                    position: "relative",
+                                    zIndex: 1,
+                                    background: cls
+                                      ? iconBgMap[cls]
+                                      : "var(--bg3)",
+                                    border: `0.5px solid ${cls ? iconBrdMap[cls] : "var(--brd2)"}`,
+                                    color: cls
+                                      ? iconClrMap[cls]
+                                      : "var(--ink4)",
+                                  }}
+                                >
+                                  <Icon
+                                    name={
+                                      item.iconName as Parameters<
+                                        typeof Icon
+                                      >[0]["name"]
+                                    }
+                                    size={13}
+                                  />
+                                </div>
+
+                                {/* Body */}
+                                <div
+                                  style={{
+                                    flex: 1,
+                                    minWidth: 0,
+                                    paddingTop: 3,
+                                  }}
+                                >
+                                  <div
+                                    style={{
+                                      display: "flex",
+                                      alignItems: "center",
+                                      gap: 8,
+                                      marginBottom: 3,
+                                      flexWrap: "wrap",
+                                    }}
+                                  >
+                                    <span
+                                      style={{
+                                        fontSize: 12.5,
+                                        fontWeight: 700,
+                                        color: "var(--ink)",
+                                        lineHeight: 1.3,
+                                        flex: 1,
+                                        minWidth: 0,
+                                      }}
+                                    >
+                                      {item.title}
+                                    </span>
+                                    {item.time && (
+                                      <span
+                                        style={{
+                                          fontSize: 10,
+                                          color: "var(--ink5)",
+                                          fontWeight: 400,
+                                          flexShrink: 0,
+                                          whiteSpace: "nowrap",
+                                        }}
+                                      >
+                                        {relTime(item.time)}
+                                      </span>
+                                    )}
+                                  </div>
+                                  {item.desc && (
+                                    <div
+                                      style={{
+                                        fontSize: 11.5,
+                                        color: "var(--ink4)",
+                                        lineHeight: 1.45,
+                                        marginBottom: 5,
+                                      }}
+                                    >
+                                      {item.desc}
+                                    </div>
+                                  )}
+                                  {item.chips && item.chips.length > 0 && (
+                                    <div
+                                      style={{
+                                        display: "flex",
+                                        alignItems: "center",
+                                        gap: 5,
+                                        flexWrap: "wrap",
+                                      }}
+                                    >
+                                      {item.chips.map((chip, ci) => (
+                                        <span
+                                          key={ci}
+                                          style={{
+                                            display: "inline-flex",
+                                            alignItems: "center",
+                                            padding: "2px 7px",
+                                            borderRadius: 4,
+                                            fontFamily: '"DM Mono",monospace',
+                                            fontSize: 9.5,
+                                            fontWeight: 600,
+                                            background: chip.cls
+                                              ? (chipBgMap[chip.cls] ??
+                                                "var(--bg3)")
+                                              : "var(--bg3)",
+                                            border: `0.5px solid ${chip.cls ? (chipBrdMap[chip.cls] ?? "var(--brd2)") : "var(--brd2)"}`,
+                                            color: chip.cls
+                                              ? (chipClrMap[chip.cls] ??
+                                                "var(--ink5)")
+                                              : "var(--ink5)",
+                                            textTransform: "uppercase",
+                                            letterSpacing: ".04em",
+                                            whiteSpace: "nowrap",
+                                          }}
+                                        >
+                                          {chip.label}
+                                        </span>
+                                      ))}
+                                    </div>
+                                  )}
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      ) : (
+                        <div
+                          style={{
+                            padding: "40px 16px",
+                            textAlign: "center",
+                            color: "var(--ink5)",
+                            fontSize: 13,
+                          }}
+                        >
+                          No activity recorded yet.
+                        </div>
+                      )}
                     </div>
-                    {acc.lastTouchAt && (
-                      <div
-                        style={{
-                          position: "relative",
-                          marginBottom: 12,
-                          fontSize: 12,
-                          color: "var(--ink3)",
-                          lineHeight: 1.5,
-                        }}
-                      >
-                        <div
-                          style={{
-                            position: "absolute",
-                            left: -16,
-                            top: 4,
-                            width: 7,
-                            height: 7,
-                            borderRadius: "50%",
-                            background: "var(--bg2)",
-                            border: "1.5px solid var(--p)",
-                          }}
-                        />
-                        <span style={{ fontWeight: 600, color: "var(--ink)" }}>
-                          Last touch
-                        </span>
-                        <span
-                          style={{
-                            fontFamily: '"DM Mono",monospace',
-                            fontSize: 10.5,
-                            color: "var(--ink5)",
-                            marginLeft: 6,
-                          }}
-                        >
-                          {relTime(acc.lastTouchAt)}
-                        </span>
-                      </div>
-                    )}
-                    {opps.map((o) => (
-                      <div
-                        key={o.rowKey}
-                        style={{
-                          position: "relative",
-                          marginBottom: 12,
-                          fontSize: 12,
-                          color: "var(--ink3)",
-                          lineHeight: 1.5,
-                        }}
-                      >
-                        <div
-                          style={{
-                            position: "absolute",
-                            left: -16,
-                            top: 4,
-                            width: 7,
-                            height: 7,
-                            borderRadius: "50%",
-                            background: "var(--bg2)",
-                            border: "1.5px solid var(--ink3)",
-                          }}
-                        />
-                        <span style={{ fontWeight: 600, color: "var(--ink)" }}>
-                          Opportunity opened
-                        </span>
-                        <span
-                          style={{
-                            fontFamily: '"DM Mono",monospace',
-                            fontSize: 10.5,
-                            color: "var(--ink5)",
-                            marginLeft: 6,
-                          }}
-                        >
-                          {relTime(o.createdAt)}
-                        </span>
-                        <div
-                          style={{
-                            fontSize: 11.5,
-                            color: "var(--ink4)",
-                            marginTop: 2,
-                          }}
-                        >
-                          {o.workspaceName} · {o.currentPhase}
-                        </div>
-                      </div>
-                    ))}
-                    {intakes.map((item) => (
-                      <div
-                        key={item.rowKey}
-                        style={{
-                          position: "relative",
-                          marginBottom: 12,
-                          fontSize: 12,
-                          color: "var(--ink3)",
-                          lineHeight: 1.5,
-                        }}
-                      >
-                        <div
-                          style={{
-                            position: "absolute",
-                            left: -16,
-                            top: 4,
-                            width: 7,
-                            height: 7,
-                            borderRadius: "50%",
-                            background: "var(--bg2)",
-                            border: "1.5px solid var(--t,#1A9E7C)",
-                          }}
-                        />
-                        <span style={{ fontWeight: 600, color: "var(--ink)" }}>
-                          Intake signal
-                        </span>
-                        <span
-                          style={{
-                            fontFamily: '"DM Mono",monospace',
-                            fontSize: 10.5,
-                            color: "var(--ink5)",
-                            marginLeft: 6,
-                          }}
-                        >
-                          {relTime(item.createdAt)}
-                        </span>
-                        <div
-                          style={{
-                            fontSize: 11.5,
-                            color: "var(--ink4)",
-                            marginTop: 2,
-                            whiteSpace: "nowrap",
-                            overflow: "hidden",
-                            textOverflow: "ellipsis",
-                          }}
-                        >
-                          {item.title}
-                        </div>
-                      </div>
-                    ))}
-                    {opps.length === 0 && intakes.length === 0 && (
-                      <div
-                        style={{
-                          fontSize: 12,
-                          color: "var(--ink5)",
-                          paddingTop: 4,
-                        }}
-                      >
-                        No additional activity recorded yet.
-                      </div>
-                    )}
-                  </div>
-                </div>
-              )}
+                  );
+                })()}
             </div>
           </>
         )}

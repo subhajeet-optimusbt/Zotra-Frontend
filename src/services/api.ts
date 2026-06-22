@@ -165,6 +165,65 @@ export function clearTokens(): void {
   localStorage.removeItem(REFRESH_TOKEN_KEY);
 }
 
+// ── Token Refresh ──────────────────────────────────────────────────────────
+
+interface RefreshResponse {
+  success: boolean;
+  message?: string;
+  token: string;
+  refreshToken: string;
+}
+
+/**
+ * Calls POST /auth/refresh with the current Bearer token + refreshToken body.
+ * On success, persists the new token pair via setTokens().
+ * On failure (network error, 401, etc.) it silently fails — the next real API
+ * call will hit a 401 and redirect to /login via the normal request() handler.
+ */
+export async function refreshTokens(): Promise<void> {
+  const token = getToken();
+  const refreshToken = getRefreshToken();
+
+  if (!token || !refreshToken) return;
+
+  try {
+    const res = await fetch(`${baseUrl().replace(/\/+$/, "")}/auth/refresh`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify({ refreshToken }),
+    });
+
+    if (!res.ok) return; // let the session expire naturally
+
+    const data: RefreshResponse = await res.json();
+
+    if (data.success && data.token && data.refreshToken) {
+      setTokens(data.token, data.refreshToken);
+    }
+  } catch {
+    // network error — do nothing, session will expire on next real call
+  }
+}
+
+/**
+ * Starts a background interval that silently refreshes the token every
+ * 30 minutes. Returns a cleanup function that clears the interval —
+ * call it when the user logs out or the component unmounts.
+ */
+export function startTokenRefreshTimer(): () => void {
+  const THIRTY_MINUTES = 30 * 60 * 1000;
+  // const THIRTY_MINUTES = 30 * 1000;
+
+  const intervalId = setInterval(() => {
+    void refreshTokens();
+  }, THIRTY_MINUTES);
+
+  return () => clearInterval(intervalId);
+}
+
 // ── URL helper ─────────────────────────────────────────────────────────────
 
 function buildUrl(path: string): string {
