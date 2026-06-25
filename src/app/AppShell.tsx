@@ -34,6 +34,7 @@ const QuickStartView = lazy(() => import("./views/QuickStartView"));
 const ConversationsView = lazy(() => import("./views/ConversationsView"));
 const AssistantPreviewView = lazy(() => import("./views/AssistantpreviewView"));
 const InventoryView = lazy(() => import("./views/InventoryView"));
+const TestInboxView = lazy(() => import("./views/TestInboxView"));
 
 // ─── Loading spinner shown while a view chunk is downloading ─────────────────
 function ViewSkeleton() {
@@ -97,6 +98,7 @@ const VALID_VIEWS: ViewType[] = [
   "assistant",
   "inventory",
   "profile",
+  "testinbox",
 ];
 
 const PATH_TO_VIEW: Record<string, ViewType> = {
@@ -119,6 +121,7 @@ const PATH_TO_VIEW: Record<string, ViewType> = {
   "/app/assistant": "assistant",
   "/app/inventory": "inventory",
   "/app/profile": "profile",
+  "/app/testinbox": "testinbox",
   "/home": "rhythm",
   "/pulse": "pulse",
   "/inbox": "inbox",
@@ -138,6 +141,7 @@ const PATH_TO_VIEW: Record<string, ViewType> = {
   "/assistant": "assistant",
   "/inventory": "inventory",
   "/profile": "profile",
+  "/testinbox": "testinbox",
 };
 
 const VIEW_TO_PATH: Record<ViewType, string> = {
@@ -160,6 +164,7 @@ const VIEW_TO_PATH: Record<ViewType, string> = {
   assistant: "/app/assistant",
   inventory: "/app/inventory",
   profile: "/app/profile",
+  testinbox: "/app/testinbox",
 };
 
 function getInitialView(): ViewType {
@@ -436,6 +441,8 @@ export default function AppShell() {
         return <AssistantPreviewView />;
       case "inventory":
         return <InventoryView />;
+        case "testinbox":
+          return <TestInboxView />
       default:
         return (
           <SimpleView

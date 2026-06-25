@@ -78,7 +78,8 @@ export type ViewType =
   | 'onboarding'
   | 'conversations'
   | 'assistant'
-  | 'inventory';
+  | 'inventory'
+  | 'testinbox';
 
 export type TenantAge = 'new' | 'week1' | 'month1' | 'month6' | 'established';
 

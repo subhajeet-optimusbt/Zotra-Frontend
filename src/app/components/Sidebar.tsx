@@ -1168,12 +1168,12 @@ const sidebarStyles = `
   border:0.5px solid var(--brd2);
   border-radius:13px;
   box-shadow:var(--sh-l), 0 0 0 1px color-mix(in srgb,var(--p) 5%,transparent);
-  z-index:1000;overflow-y:auto;width:196px;
-  /* Safety net: never taller than the viewport */
-  max-height:calc(100vh - 16px);
+  z-index:1000;
+  width:196px;
+  max-height:calc(100vh - 32px);
+  overflow-y:auto;
   animation:cfg-fly-in .16s cubic-bezier(.34,1.26,.64,1);
   transform-origin:left center;
-  /* Custom thin scrollbar so it stays clean if content ever overflows */
   scrollbar-width:thin;
   scrollbar-color:var(--brd2) transparent;
 }
@@ -1185,7 +1185,6 @@ const sidebarStyles = `
   text-transform:uppercase;color:var(--ink5);
   padding:10px 14px 7px;border-bottom:0.5px solid var(--brd);
   opacity:0.75;
-  /* stick header at top when scrolling */
   position:sticky;top:0;background:var(--bg2);z-index:1;
 }
 .sb-cfg-item{
@@ -1228,13 +1227,6 @@ type NavItem = {
   kind?: string;
 };
 
-// ─── Flyout position type ─────────────────────────────────────────────────────
-interface FlyoutPos {
-  top?: number;
-  bottom?: number;
-  left: number;
-}
-
 const Sidebar: React.FC<SidebarProps> = ({
   view,
   setView,
@@ -1249,7 +1241,8 @@ const Sidebar: React.FC<SidebarProps> = ({
   const [menuOpen, setMenuOpen] = useState(false);
   const [flyoutOpen, setFlyoutOpen] = useState(false);
   const [menuPos, setMenuPos] = useState({ bottom: 0, left: 0 });
-  const [flyoutPos, setFlyoutPos] = useState<FlyoutPos>({ bottom: 0, left: 0 });
+  // Only track left — top is always 50vh via CSS, no bottom needed
+  const flyoutLeftRef = useRef<number>(0);
 
   const footerRef = useRef<HTMLDivElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
@@ -1286,37 +1279,19 @@ const Sidebar: React.FC<SidebarProps> = ({
     setFlyoutOpen(false);
   };
 
-  // ─── Smart flyout positioning ─────────────────────────────────────────────
-  // Measures space above / below the trigger row and anchors the flyout to
-  // whichever side has more room. A max-height cap in CSS ensures the list
-  // is always fully visible even on small or zoomed-in screens.
   const handleEmailArrowClick = (e: React.MouseEvent) => {
     e.stopPropagation();
+    if (flyoutOpen) {
+      setFlyoutOpen(false);
+      return;
+    }
+    // Write to ref synchronously — no state update, no extra render
     if (emailRowRef.current) {
       const rect = emailRowRef.current.getBoundingClientRect();
-      const GAP = 6;
-      // Approximate height: header (32px) + 8 items × 40px each
-      const APPROX_HEIGHT = 32 + 8 * 40;
-      const spaceAbove = rect.top;
-      const spaceBelow = window.innerHeight - rect.bottom;
-
-      if (spaceAbove >= APPROX_HEIGHT || spaceAbove > spaceBelow) {
-        // ── Opens UPWARD — bottom edge of flyout aligns with top of trigger ──
-        setFlyoutPos({
-          bottom: window.innerHeight - rect.top + GAP,
-          left: rect.right + GAP,
-          top: undefined,
-        });
-      } else {
-        // ── Opens DOWNWARD — top edge of flyout aligns with bottom of trigger ──
-        setFlyoutPos({
-          top: rect.bottom + GAP,
-          left: rect.right + GAP,
-          bottom: undefined,
-        });
-      }
+      flyoutLeftRef.current = rect.right + 6;
     }
-    setFlyoutOpen((v) => !v);
+    // Single state update triggers exactly one render, ref value already correct
+    setFlyoutOpen(true);
   };
 
   const today: NavItem[] = [
@@ -1374,6 +1349,7 @@ const Sidebar: React.FC<SidebarProps> = ({
     { id: "projects", name: "Project", ic: "kanban-square" },
     { id: "finance", name: "Finance", ic: "receipt" },
     { id: "renewal", name: "Renewal", ic: "refresh-cw" },
+    { id: "testinbox", name: "Test Inbox", ic: "inbox" },
   ];
 
   const renderItems = (items: NavItem[]) =>
@@ -1421,13 +1397,15 @@ const Sidebar: React.FC<SidebarProps> = ({
     .slice(0, 2)
     .toUpperCase();
 
-  // ─── Computed flyout style ────────────────────────────────────────────────
+  // Flyout is always vertically centred. Only left changes.
+  // Guard: only render when flyoutLeft > 0 so it never paints at x=0.
   const flyoutStyle: React.CSSProperties = {
-    left: flyoutPos.left,
-    maxHeight: "calc(100vh - 16px)",
-    ...(flyoutPos.top !== undefined
-      ? { top: flyoutPos.top }
-      : { bottom: flyoutPos.bottom }),
+    position: "fixed",
+    left: flyoutLeftRef.current,
+    top: "50%",
+    transform: "translateY(-50%)",
+    maxHeight: "calc(100vh - 32px)",
+    overflowY: "auto",
   };
 
   return (
@@ -1628,8 +1606,9 @@ const Sidebar: React.FC<SidebarProps> = ({
         </div>
       )}
 
-      {/* Configure flyout */}
-      {flyoutOpen && (
+      {/* Configure flyout — only render when flyoutLeft is measured (> 0)
+          so it never paints at position 0 before jumping to the correct spot */}
+      {flyoutOpen && flyoutLeftRef.current > 0 && (
         <div
           ref={flyoutRef}
           className="sb-configure-flyout"
