@@ -278,6 +278,74 @@ async function request<T>(
 
   if (!res.ok) {
     if (res.status === 401 && !options?.skipAuth) {
+      // ── Silent refresh-then-retry ──────────────────────────────────────
+      // Before giving up, attempt one token refresh. This covers the window
+      // between the 30-min background timer ticks, e.g. a request that fires
+      // right as the old token expires.
+      const refreshToken = getRefreshToken();
+      const oldToken = getToken();
+
+      if (refreshToken && oldToken) {
+        try {
+          const refreshRes = await fetch(`${buildUrl("auth/refresh")}`, {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              Authorization: `Bearer ${oldToken}`,
+            },
+            body: JSON.stringify({ refreshToken }),
+          });
+
+          if (refreshRes.ok) {
+            const refreshData = (await refreshRes.json()) as {
+              success: boolean;
+              token: string;
+              refreshToken: string;
+            };
+
+            if (
+              refreshData.success &&
+              refreshData.token &&
+              refreshData.refreshToken
+            ) {
+              setTokens(refreshData.token, refreshData.refreshToken);
+
+              // Rebuild headers with the new token and retry once
+              const retryHeaders = new Headers(headers);
+              retryHeaders.set("Authorization", `Bearer ${refreshData.token}`);
+              const retryRes = await fetch(buildUrl(path), {
+                ...restOptions,
+                headers: retryHeaders,
+              });
+
+              if (retryRes.ok) {
+                try {
+                  return (await retryRes.json()) as T;
+                } catch {
+                  return null as unknown as T;
+                }
+              }
+
+              // Retry also 401 → fall through to full logout below
+              if (retryRes.status !== 401) {
+                const retryData = await retryRes.json().catch(() => null);
+                const retryMsg =
+                  (retryData &&
+                  typeof retryData === "object" &&
+                  "message" in retryData
+                    ? (retryData as { message: string }).message
+                    : null) ?? `Request failed with status ${retryRes.status}`;
+                throw new ApiError(retryMsg, retryRes.status, retryData);
+              }
+            }
+          }
+        } catch (e) {
+          if (e instanceof ApiError) throw e;
+          // network error on refresh — fall through to full logout
+        }
+      }
+
+      // Refresh failed or no tokens — full logout
       clearTokens();
       [
         "zotra_userId",
@@ -401,6 +469,32 @@ export function googleLogin(
       }
     }
   }, 500);
+}
+
+/**
+ * POST /auth/logout — invalidates the session server-side.
+ * Always clears local tokens regardless of server response.
+ */
+export async function logout(): Promise<void> {
+  const token = getToken();
+  const refreshToken = getRefreshToken();
+
+  try {
+    if (token) {
+      await fetch(`${buildUrl("auth/logout")}`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ refreshToken }),
+      });
+    }
+  } catch {
+    // Network failure — still clear local state
+  } finally {
+    clearTokens();
+  }
 }
 
 /** GET /api/tenants/user/:userId  — requires token */

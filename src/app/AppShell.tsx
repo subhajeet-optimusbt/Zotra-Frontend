@@ -7,7 +7,7 @@ import ZotraTweaks from "./components/ZotraTweaks";
 import { SimpleView } from "./views/OtherViews";
 import { useUserProfile } from "./types/userProfile";
 import type { ViewType, Tweaks, ColorScheme } from "./types";
-import { baseUrl } from "./utils/utils";
+import { baseUrl, apiFetch } from "./utils/utils";
 import { startTokenRefreshTimer } from "../services/api";
 import { useAuth } from "../context/AuthContext";
 import ZotraChatbot from "./components/ZotraChatbot";
@@ -253,19 +253,13 @@ export default function AppShell() {
   useEffect(() => {
     const token = localStorage.getItem("zotra_token");
     if (!token) return;
-    const headers = {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${token}`,
-    };
     const base = baseUrl();
+    // Use apiFetch so a stale token is silently refreshed before counts load,
+    // preventing a redirect-to-login on the very first page paint.
     Promise.allSettled([
-      fetch(`${base}/accounts`, { headers }).then((r) =>
-        r.ok ? r.json() : [],
-      ),
-      fetch(`${base}/opportunities`, { headers }).then((r) =>
-        r.ok ? r.json() : [],
-      ),
-      fetch(`${base}/intakes`, { headers }).then((r) => (r.ok ? r.json() : [])),
+      apiFetch(`${base}/accounts`).then((r) => (r.ok ? r.json() : [])),
+      apiFetch(`${base}/opportunities`).then((r) => (r.ok ? r.json() : [])),
+      apiFetch(`${base}/intakes`).then((r) => (r.ok ? r.json() : [])),
     ]).then(([accounts, opps, intakes]) => {
       const count = (res: PromiseSettledResult<unknown>) =>
         res.status === "fulfilled" && Array.isArray(res.value)
@@ -441,8 +435,8 @@ export default function AppShell() {
         return <AssistantPreviewView />;
       case "inventory":
         return <InventoryView />;
-        case "testinbox":
-          return <TestInboxView />
+      case "testinbox":
+        return <TestInboxView />;
       default:
         return (
           <SimpleView

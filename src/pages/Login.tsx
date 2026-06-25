@@ -7,6 +7,7 @@ import {
   ApiError,
   setTokens,
   clearTokens,
+  refreshTokens,
   type LoginResponse,
 } from "../services/api";
 import { useAuth } from "../context/AuthContext";
@@ -154,21 +155,40 @@ export default function Login() {
   }, []);
 
   // ── Continue as (saved session) ──────────────────────────────────────────
-  const handleLaunch = () => {
+  const handleLaunch = async () => {
     if (!savedSession) return;
 
     const token = localStorage.getItem("zotra_token") ?? "";
-    // No token = session expired, force fresh sign-in
-    if (!token) {
+    const storedRefresh = localStorage.getItem("zotra_refresh_token") ?? "";
+
+    // No tokens at all — session fully expired, force fresh sign-in
+    if (!token && !storedRefresh) {
       clearSession();
       setSavedSession(null);
-      setEmail("");
+      setEmail(savedSession.email); // keep email pre-filled so user just types password
+      setError("Your session has expired. Please sign in again.");
       return;
     }
 
     setLaunchLoading(true);
-    // Tokens are already in localStorage from the original login — no need to re-save
+    setError(null);
 
+    // Proactively refresh — covers "logged in yesterday, app was closed" case
+    // where the 30-min background timer never fired since the app was closed.
+    await refreshTokens();
+
+    // If refresh wiped the token (refresh token also expired), tell the user
+    const freshToken = localStorage.getItem("zotra_token") ?? "";
+    if (!freshToken) {
+      clearSession();
+      setSavedSession(null);
+      setEmail(savedSession.email); // keep email pre-filled
+      setError("Your session has expired. Please sign in again.");
+      setLaunchLoading(false);
+      return;
+    }
+
+    // Token is valid (either existing or freshly refreshed) — launch the app
     setAuth(
       String(savedSession.userId),
       String(savedSession.tenantId),

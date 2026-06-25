@@ -1,46 +1,76 @@
 /**
- * TestInboxView.tsx
- * Test Portal inbox — merged from frontend-final design into Zotra.
- * Backend: Azure Functions at zotrallm.azurewebsites.net (Python, not .NET).
- * All calls go through FUNC_BASE + path + ?code=FUNC_CODE
+ * TestInboxView.tsx — v3 redesign
+ * Backend: .NET via apiFetch + baseUrl() + Bearer token
  */
 
 import React, { useState, useCallback, useRef, useEffect } from "react";
+import { baseUrl, apiFetch } from "../utils/utils";
+import { getToken } from "../../services/api";
 
-// ── Azure Functions config ────────────────────────────────────────────────────
+// ── Session ───────────────────────────────────────────────────────────────────
 
+const SESSION_KEY = "zotra_saved_session";
 
-const FUNC_BASE = import.meta.env.VITE_FUNC_BASE as string;
-const FUNC_CODE = import.meta.env.VITE_FUNC_CODE as string;
-function funcUrl(path: string, queryParams?: Record<string, string>): string {
-  const p = new URLSearchParams(queryParams);
-  if (FUNC_CODE) p.set("code", FUNC_CODE); // only add when non-empty
-  return `${FUNC_BASE}${path}?${p}`;
+function getTenantId(): string {
+  try {
+    const raw = localStorage.getItem(SESSION_KEY);
+    if (!raw) return "";
+    const s = JSON.parse(raw);
+    if (Date.now() - (s.savedAt ?? 0) > 30 * 24 * 60 * 60 * 1000) {
+      localStorage.removeItem(SESSION_KEY);
+      return "";
+    }
+    return s.tenantId ?? "";
+  } catch {
+    return "";
+  }
 }
-/**
- * All requests to the Azure Functions backend.
- * @param path      e.g. "/test/mailbox/messages"
- * @param orgId     sent as X-Org-Id header (not in URL or body)
- * @param query     any extra query params besides `code` (e.g. direction, thread_id)
- * @param init      extra fetch options (method, body, etc.)
- */
-async function funcFetch<T>(
+
+function getSessionOrg() {
+  try {
+    const s = JSON.parse(localStorage.getItem(SESSION_KEY) ?? "{}");
+    const name: string =
+      s.orgName ?? s.organisationName ?? s.tenantId ?? "My Organisation";
+    return { name, initials: name.substring(0, 2).toUpperCase() };
+  } catch {
+    return { name: "My Organisation", initials: "MO" };
+  }
+}
+
+function authHeaders(): Record<string, string> {
+  const token = getToken();
+  return {
+    accept: "*/*",
+    "Content-Type": "application/json",
+    ...(token ? { Authorization: `Bearer ${token}` } : {}),
+  };
+}
+
+async function inboxFetch<T>(
   path: string,
-  orgId: string,
   query?: Record<string, string>,
   init?: RequestInit,
 ): Promise<T> {
-  const res = await fetch(funcUrl(path, query), {
-    headers: {
-      "Content-Type": "application/json",
-      "X-Org-Id": orgId,
-      ...init?.headers,
-    },
+  const clean = Object.fromEntries(
+    Object.entries(query ?? {}).filter(([, v]) => v !== "" && v != null),
+  );
+  const qs = Object.keys(clean).length ? "?" + new URLSearchParams(clean) : "";
+  const res = await apiFetch(`${baseUrl()}${path}${qs}`, {
     ...init,
+    headers: {
+      ...authHeaders(),
+      ...(init?.headers as Record<string, string> | undefined),
+    },
   });
   if (!res.ok) {
-    const err = await res.text().catch(() => res.status.toString());
-    throw new Error(`${res.status}: ${err}`);
+    let d = res.status.toString();
+    try {
+      const b = await res.json();
+      d = b?.detail ?? b?.title ?? d;
+    } catch {
+      /* */
+    }
+    throw new Error(`${res.status}: ${d}`);
   }
   return res.json() as Promise<T>;
 }
@@ -58,9 +88,7 @@ interface Tag {
 interface Org {
   id: string;
   name: string;
-  domain: string;
   initials: string;
-  color: string;
 }
 interface CalEvent {
   id: string;
@@ -100,9 +128,6 @@ interface Thread {
   messages: Message[];
   composerSide: MessageSide;
 }
-
-// ── Backend response shapes ───────────────────────────────────────────────────
-
 interface MailMessageOut {
   message_id: string;
   organisation_id: string;
@@ -117,7 +142,6 @@ interface MailMessageOut {
   sent_at: string | null;
   created_at: string;
 }
-
 interface CalEventOut {
   event_id: string;
   title: string;
@@ -129,28 +153,85 @@ interface CalEventOut {
   week: "this" | "next" | "future";
 }
 
-// ── Org list ──────────────────────────────────────────────────────────────────
+// ── Tokens ────────────────────────────────────────────────────────────────────
 
-const INITIAL_ORGS: Org[] = [
-  {
-    id: "org_001",
-    name: "Acme Manufacturing",
-    domain: "acmecorp.com",
-    initials: "AM",
-    color: "var(--p, #5552C9)",
+const C = {
+  // Brand
+  p: "var(--p,#5552C9)",
+  pGrad: "linear-gradient(135deg,#5552C9 0%,#7B78E8 100%)",
+  pSoft: "var(--pp,#EEEEFF)",
+  pDark: "var(--pd,#3C3489)",
+  pGlow: "rgba(85,82,201,.22)",
+  // Teal
+  t: "var(--t,#0F6E56)",
+  tSoft: "var(--tp,#E4F7F1)",
+  tDark: "var(--td,#085041)",
+  // Status
+  amber: "#D97706",
+  amberBg: "#FFFBEB",
+  amberBdr: "#FDE68A",
+  red: "#DC2626",
+  redBg: "#FEF2F2",
+  green: "#059669",
+  greenBg: "#ECFDF5",
+  // Neutrals
+  ink: "var(--ink,#0F0E17)",
+  ink2: "var(--ink2,#1F2937)",
+  ink3: "var(--ink3,#4B5563)",
+  ink4: "var(--ink4,#9CA3AF)",
+  bg: "var(--bg,#F7F8FA)",
+  bg2: "var(--bg2,#FFFFFF)",
+  bg3: "var(--bg3,#F1F2F5)",
+  brd: "var(--brd,#E5E7EB)",
+  brd2: "var(--brd2,#D1D5DB)",
+};
+
+const STATUS_MAP: Record<
+  string,
+  { bg: string; color: string; bdr: string; dot: string; label: string }
+> = {
+  pending: {
+    bg: C.amberBg,
+    color: C.amber,
+    bdr: C.amberBdr,
+    dot: C.amber,
+    label: "Pending",
   },
-  {
-    id: "org_002",
-    name: "HealthTech Solutions",
-    domain: "healthtech.io",
-    initials: "HT",
-    color: "var(--t, #1D9E75)",
+  confirmed: {
+    bg: C.greenBg,
+    color: C.green,
+    bdr: "#6EE7B7",
+    dot: C.green,
+    label: "Confirmed",
   },
-];
+  proposed: {
+    bg: C.pSoft,
+    color: C.pDark,
+    bdr: "#C4B5FD",
+    dot: C.p,
+    label: "Proposed",
+  },
+  declined: {
+    bg: C.redBg,
+    color: C.red,
+    bdr: "#FCA5A5",
+    dot: C.red,
+    label: "Declined",
+  },
+  cancelled: {
+    bg: C.bg3,
+    color: C.ink4,
+    bdr: C.brd2,
+    dot: C.ink4,
+    label: "Cancelled",
+  },
+};
 
 // ── Adapters ──────────────────────────────────────────────────────────────────
 
 function adaptMessage(m: MailMessageOut): Thread {
+  if (m.sent_at === "") m.sent_at = null;
+  if ((m.created_at as string) === "") m.created_at = new Date().toISOString();
   const name = m.from_name || m.from_email || "?";
   const ts = m.sent_at || m.created_at;
   const display = ts
@@ -174,12 +255,11 @@ function adaptMessage(m: MailMessageOut): Thread {
     from: name,
     email: m.from_email,
     initials: name.substring(0, 2).toUpperCase(),
-    avatarColor:
-      m.direction === "outbound" ? "var(--p, #534AB7)" : "var(--t, #0F6E56)",
+    avatarColor: m.direction === "outbound" ? C.p : C.t,
     time: display,
     fullTime,
     subject: m.subject || "(no subject)",
-    preview: (m.body || "").replace(/<[^>]+>/g, "").substring(0, 120),
+    preview: (m.body || "").replace(/<[^>]+>/g, "").substring(0, 110),
     tags: [],
     unread: m.processing_status === "new",
     direction: m.direction === "outbound" ? "Sent" : "Inbound",
@@ -190,16 +270,17 @@ function adaptMessage(m: MailMessageOut): Thread {
 }
 
 function adaptToMessage(m: MailMessageOut): Message {
+  if (m.sent_at === "") m.sent_at = null;
+  if ((m.created_at as string) === "") m.created_at = new Date().toISOString();
   return {
     id: m.message_id,
     side: m.direction === "outbound" ? "org" : "cust",
     initials: (m.from_name || m.from_email || "?")
       .substring(0, 2)
       .toUpperCase(),
-    avatarColor:
-      m.direction === "outbound" ? "var(--p, #534AB7)" : "var(--t, #0F6E56)",
+    avatarColor: m.direction === "outbound" ? C.p : C.t,
     from: m.from_name || m.from_email,
-    label: m.direction === "outbound" ? "Organisation sent" : "Customer reply",
+    label: m.direction === "outbound" ? "You" : "Customer",
     time: m.sent_at
       ? new Date(m.sent_at).toLocaleTimeString([], {
           hour: "2-digit",
@@ -223,42 +304,33 @@ function adaptCalEvent(e: CalEventOut): CalEvent {
   };
 }
 
-// ── Design tokens mapped to Zotra vars ────────────────────────────────────────
+// ── Primitives ────────────────────────────────────────────────────────────────
 
-const T = {
-  // org/sent colour — uses Zotra primary
-  org: "var(--p, #534AB7)",
-  orgLight: "var(--pp, #F0EFFE)",
-  orgDark: "var(--pd, #3C3489)",
-  orgBorder: "var(--p, #534AB7)44",
-  // customer colour — uses Zotra teal
-  cust: "var(--t, #0F6E56)",
-  custLight: "var(--tp, #E4F7F1)",
-  custDark: "var(--td, #085041)",
-  // Status
-  amber: "var(--amber, #EF9F27)",
-  amberBg: "var(--amberp, #FEF3DC)",
-  red: "var(--ri, #E24B4A)",
-  redBg: "var(--rib, #FEF0F0)",
-  green: "var(--t, #1D9E75)",
-};
+const Skel: React.FC<{
+  w: number | string;
+  h: number;
+  r?: number | string;
+  d?: number;
+}> = ({ w, h, r = 6, d = 0 }) => (
+  <div
+    style={{
+      width: w,
+      height: h,
+      borderRadius: r,
+      background: C.bg3,
+      flexShrink: 0,
+      animation: "ti-sh 1.6s ease-in-out infinite",
+      animationDelay: `${d}s`,
+    }}
+  />
+);
 
-const STATUS_COLOR: Record<string, string> = {
-  pending: T.amber,
-  confirmed: T.green,
-  proposed: T.org,
-  declined: T.red,
-  cancelled: "var(--ink4, #8C8B90)",
-};
-
-// ── Small reusable components ─────────────────────────────────────────────────
-
-const Avatar: React.FC<{
+const Av: React.FC<{
   initials: string;
   color: string;
   size?: number;
-  unread?: boolean;
-}> = ({ initials, color, size = 32, unread = false }) => (
+  ring?: boolean;
+}> = ({ initials, color, size = 34, ring = false }) => (
   <div
     style={{
       width: size,
@@ -269,177 +341,50 @@ const Avatar: React.FC<{
       display: "flex",
       alignItems: "center",
       justifyContent: "center",
-      fontSize: size < 28 ? 9 : size < 36 ? 11 : 13,
+      fontSize: size < 32 ? 10 : 12,
       fontWeight: 700,
       flexShrink: 0,
-      letterSpacing: ".03em",
-      boxShadow: unread
-        ? `0 0 0 2px var(--bg2,#fff), 0 0 0 4px ${color}`
-        : "none",
+      letterSpacing: ".02em",
+      boxShadow: ring ? `0 0 0 2.5px ${C.bg2}, 0 0 0 4px ${color}` : "none",
+      transition: "box-shadow .15s",
     }}
   >
     {initials}
   </div>
 );
 
-const StatusPill: React.FC<{ status: string }> = ({ status }) => {
-  const MAP: Record<
-    string,
-    { bg: string; color: string; border: string; label: string }
-  > = {
-    pending: {
-      bg: T.amberBg,
-      color: "#92400E",
-      border: "#FDE68A",
-      label: "Pending",
-    },
-    confirmed: {
-      bg: "var(--tp,#F0FDF4)",
-      color: "var(--td,#166534)",
-      border: "#BBF7D0",
-      label: "Confirmed",
-    },
-    proposed: {
-      bg: T.orgLight,
-      color: T.orgDark,
-      border: "var(--brd2,#D4D0F8)",
-      label: "Proposed",
-    },
-    declined: {
-      bg: "var(--rib,#FEF2F2)",
-      color: "var(--rif,#991B1B)",
-      border: "#FCA5A5",
-      label: "Declined",
-    },
-    cancelled: {
-      bg: "var(--bg3,#F3F4F6)",
-      color: "var(--ink4,#6B7280)",
-      border: "var(--brd,#e5e7eb)",
-      label: "Cancelled",
-    },
-  };
-  const s = MAP[status] ?? MAP.pending;
+const Pill: React.FC<{ status: string }> = ({ status }) => {
+  const s = STATUS_MAP[status] ?? STATUS_MAP.pending;
   return (
     <span
       style={{
-        fontSize: 10,
-        fontWeight: 700,
+        display: "inline-flex",
+        alignItems: "center",
+        gap: 5,
+        fontSize: 11,
+        fontWeight: 600,
         padding: "3px 9px",
         borderRadius: 20,
-        letterSpacing: ".02em",
         background: s.bg,
         color: s.color,
-        border: `1px solid ${s.border}`,
-        flexShrink: 0,
+        border: `1px solid ${s.bdr}`,
       }}
     >
+      <span
+        style={{
+          width: 5,
+          height: 5,
+          borderRadius: "50%",
+          background: s.dot,
+          flexShrink: 0,
+        }}
+      />
       {s.label}
     </span>
   );
 };
 
-const DirPill: React.FC<{ direction: string }> = ({ direction }) => {
-  const m: Record<string, { bg: string; color: string }> = {
-    Inbound: { bg: T.custLight, color: T.custDark },
-    Sent: { bg: T.orgLight, color: T.orgDark },
-  };
-  const s = m[direction] ?? m.Sent;
-  return (
-    <span
-      style={{
-        fontSize: 10,
-        fontWeight: 700,
-        padding: "3px 9px",
-        borderRadius: 20,
-        background: s.bg,
-        color: s.color,
-        flexShrink: 0,
-      }}
-    >
-      {direction}
-    </span>
-  );
-};
-
-// ── Skeleton rows ─────────────────────────────────────────────────────────────
-
-const Skel: React.FC<{
-  w: number | string;
-  h: number;
-  r?: number | string;
-  delay?: number;
-  style?: React.CSSProperties;
-}> = ({ w, h, r = 6, delay = 0, style }) => (
-  <div
-    style={{
-      width: w,
-      height: h,
-      borderRadius: r,
-      background: "var(--bg3,#f3f4f6)",
-      flexShrink: 0,
-      animationDelay: `${delay}s`,
-      animation: "ti-pulse 1.5s ease-in-out infinite",
-      ...style,
-    }}
-  />
-);
-
-const ThreadRowSkeleton: React.FC<{ delay?: number }> = ({ delay = 0 }) => (
-  <div
-    style={{
-      display: "grid",
-      gridTemplateColumns: "48px 1fr 280px 90px",
-      alignItems: "center",
-      padding: "0 22px",
-      height: 58,
-      borderBottom: "1px solid var(--brd,#e5e7eb)",
-      gap: 14,
-    }}
-  >
-    <Skel w={34} h={34} r="50%" delay={delay} />
-    <Skel w="58%" h={11} delay={delay + 0.05} />
-    <div style={{ display: "flex", flexDirection: "column", gap: 5 }}>
-      <Skel w="80%" h={11} delay={delay + 0.08} />
-      <Skel w="60%" h={10} delay={delay + 0.12} />
-    </div>
-    <Skel
-      w={36}
-      h={10}
-      delay={delay + 0.08}
-      style={{ marginLeft: "auto" } as React.CSSProperties}
-    />
-  </div>
-);
-
-const CalEventSkeleton: React.FC<{ delay?: number }> = ({ delay = 0 }) => (
-  <div
-    style={{
-      padding: "13px 16px",
-      borderRadius: "var(--r-m,10px)",
-      background: "var(--bg2,#fff)",
-      border: "1px solid var(--brd,#e5e7eb)",
-      borderLeft: "3px solid var(--brd2,#d1d5db)",
-      marginBottom: 8,
-    }}
-  >
-    <div
-      style={{
-        display: "flex",
-        justifyContent: "space-between",
-        marginBottom: 10,
-      }}
-    >
-      <Skel w="55%" h={13} delay={delay} />
-      <Skel w={64} h={22} r={20} delay={delay + 0.06} />
-    </div>
-    <div style={{ display: "flex", gap: 12 }}>
-      <Skel w={80} h={10} delay={delay + 0.1} />
-      <Skel w={110} h={10} delay={delay + 0.14} />
-    </div>
-  </div>
-);
-
-// ── Thread Detail Panel ───────────────────────────────────────────────────────
+// ── Thread detail panel ───────────────────────────────────────────────────────
 
 const ThreadDetail: React.FC<{
   thread: Thread;
@@ -447,57 +392,78 @@ const ThreadDetail: React.FC<{
   onClose: () => void;
   onToast: (m: string) => void;
 }> = ({ thread, orgId, onClose, onToast }) => {
-  const [messages, setMessages] = useState<Message[]>(thread.messages);
-  const [replyText, setReplyText] = useState("");
-  const [loadingMsgs, setLoadingMsgs] = useState(true);
+  const [msgs, setMsgs] = useState<Message[]>(thread.messages);
+  const [reply, setReply] = useState("");
+  const [loading, setLoading] = useState(true);
+  const [sending, setSending] = useState(false);
+  const bodyRef = useRef<HTMLDivElement>(null);
+
+  const scrollBottom = () =>
+    setTimeout(
+      () =>
+        bodyRef.current?.scrollTo({
+          top: bodyRef.current.scrollHeight,
+          behavior: "smooth",
+        }),
+      80,
+    );
 
   useEffect(() => {
-    setLoadingMsgs(true);
-    funcFetch<{ messages: MailMessageOut[] }>("/test/mailbox/messages", orgId, {
+    setLoading(true);
+    inboxFetch<{ messages: MailMessageOut[] }>("/test/mailbox/messages", {
       thread_id: thread.id,
     })
-      .then((res) => setMessages((res.messages || []).map(adaptToMessage)))
+      .then((res) => {
+        setMsgs((res.messages || []).map(adaptToMessage));
+        scrollBottom();
+      })
       .catch(() => {})
-      .finally(() => setLoadingMsgs(false));
-  }, [thread.id, orgId]);
+      .finally(() => setLoading(false));
+  }, [thread.id]);
 
-  const sendReply = async () => {
-    const text = replyText.trim();
+  const send = async () => {
+    const text = reply.trim();
     if (!text) {
       onToast("Write a message first");
       return;
     }
+    setSending(true);
     try {
-      await funcFetch("/test/mailbox/send", orgId, undefined, {
+      await inboxFetch("/test/mailbox/send", undefined, {
         method: "POST",
         body: JSON.stringify({
           organisation_id: orgId,
           from_email: "rep@zotra.ai",
-          from_name: "Zotra via rep@zotra.ai",
+          from_name: "Zotra Portal",
           to_emails: thread.email,
           subject: thread.subject,
           body: `<p>${text.replace(/\n/g, "<br>")}</p>`,
           thread_id: thread.id,
+          sent_at: new Date().toISOString(),
+          created_at: new Date().toISOString(),
           created_by: "tester",
         }),
       });
-      setMessages((prev) => [
-        ...prev,
+      setMsgs((p) => [
+        ...p,
         {
           id: "m" + Date.now(),
           side: "org",
           initials: "ZA",
-          avatarColor: T.org,
-          from: "Zotra via rep@zotra.ai",
-          label: "Organisation sent",
+          avatarColor: C.p,
+          from: "You",
+          label: "You",
           time: "Just now",
           body: `<p>${text.replace(/\n/g, "<br>")}</p>`,
         },
       ]);
-      setReplyText("");
-      onToast("Reply sent");
+      setReply("");
+      scrollBottom();
+      onToast("Reply sent ✓");
     } catch {
       onToast("Failed to send");
+    } finally {
+      setSending(false);
     }
   };
 
@@ -513,325 +479,271 @@ const ThreadDetail: React.FC<{
       {/* Header */}
       <div
         style={{
-          padding: "14px 22px",
-          borderBottom: "1px solid var(--brd,#e5e7eb)",
-          background: "var(--bg2,#fff)",
+          padding: "18px 24px 16px",
+          borderBottom: `1px solid ${C.brd}`,
+          background: C.bg2,
           flexShrink: 0,
         }}
       >
-        <button
-          onClick={onClose}
-          style={{
-            display: "inline-flex",
-            alignItems: "center",
-            gap: 5,
-            fontSize: 12,
-            fontWeight: 600,
-            color: "var(--ink4,#6b7280)",
-            border: "none",
-            background: "transparent",
-            cursor: "pointer",
-            padding: "5px 8px 5px 4px",
-            borderRadius: "var(--r-s,6px)",
-            fontFamily: "inherit",
-            marginBottom: 14,
-          }}
-        >
-          ← Close
-        </button>
-
         <div
           style={{
             display: "flex",
-            alignItems: "flex-start",
+            alignItems: "center",
             justifyContent: "space-between",
-            gap: 12,
+            marginBottom: 16,
           }}
         >
-          <div style={{ flex: 1, minWidth: 0 }}>
-            <div
-              style={{
-                fontSize: 17,
-                fontWeight: 700,
-                letterSpacing: "-.4px",
-                marginBottom: 10,
-              }}
+          <button onClick={onClose} className="ti-back-btn">
+            <svg
+              width="14"
+              height="14"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2.5"
+              strokeLinecap="round"
+              strokeLinejoin="round"
             >
-              {thread.subject}
-            </div>
-            <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-              <Avatar
-                initials={thread.initials}
-                color={thread.avatarColor}
-                size={36}
-              />
-              <div>
-                <div style={{ fontSize: 13, fontWeight: 700 }}>
-                  {thread.from}
-                  <span
-                    style={{
-                      fontSize: 12,
-                      fontWeight: 400,
-                      color: "var(--ink4,#6b7280)",
-                      marginLeft: 6,
-                      fontFamily: "monospace",
-                    }}
-                  >
-                    &lt;{thread.email}&gt;
-                  </span>
-                </div>
-                <div
-                  style={{
-                    fontSize: 11,
-                    color: "var(--ink4,#6b7280)",
-                    marginTop: 2,
-                  }}
-                >
-                  To: {thread.to}
-                </div>
-              </div>
-            </div>
-          </div>
-          <div
-            style={{
-              display: "flex",
-              alignItems: "center",
-              gap: 8,
-              flexShrink: 0,
-              marginTop: 4,
-            }}
-          >
-            <DirPill direction={thread.direction} />
+              <polyline points="15 18 9 12 15 6" />
+            </svg>
+            Back
+          </button>
+          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
             <span
               style={{
                 fontSize: 11,
-                color: "var(--ink4,#6b7280)",
-                fontFamily: "monospace",
-                whiteSpace: "nowrap",
+                fontWeight: 600,
+                padding: "3px 10px",
+                borderRadius: 20,
+                background: thread.direction === "Inbound" ? C.tSoft : C.pSoft,
+                color: thread.direction === "Inbound" ? C.tDark : C.pDark,
+                border: `1px solid ${thread.direction === "Inbound" ? "#A7F3D0" : "#C4B5FD"}`,
               }}
+            >
+              {thread.direction}
+            </span>
+            <span
+              style={{ fontSize: 11, color: C.ink4, fontFamily: "monospace" }}
             >
               {thread.fullTime}
             </span>
+          </div>
+        </div>
+
+        <div style={{ display: "flex", gap: 14, alignItems: "flex-start" }}>
+          <Av initials={thread.initials} color={thread.avatarColor} size={44} />
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <h2
+              style={{
+                margin: 0,
+                fontSize: 17,
+                fontWeight: 800,
+                letterSpacing: "-.4px",
+                color: C.ink,
+                lineHeight: 1.25,
+                marginBottom: 6,
+              }}
+            >
+              {thread.subject}
+            </h2>
+            <div
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: 8,
+                flexWrap: "wrap",
+              }}
+            >
+              <span style={{ fontSize: 13, fontWeight: 600, color: C.ink2 }}>
+                {thread.from}
+              </span>
+              <span
+                style={{ fontSize: 12, color: C.ink4, fontFamily: "monospace" }}
+              >
+                &lt;{thread.email}&gt;
+              </span>
+              {thread.to && (
+                <span style={{ fontSize: 11, color: C.ink4 }}>
+                  → {thread.to}
+                </span>
+              )}
+            </div>
           </div>
         </div>
       </div>
 
       {/* Messages */}
       <div
-        style={{ flex: 1, overflowY: "auto", background: "var(--bg,#f9fafb)" }}
+        ref={bodyRef}
+        style={{
+          flex: 1,
+          overflowY: "auto",
+          padding: "24px 24px 16px",
+          background: C.bg,
+        }}
       >
         <div
           style={{
-            maxWidth: 860,
+            maxWidth: 720,
             margin: "0 auto",
-            padding: "20px 22px",
             display: "flex",
             flexDirection: "column",
-            gap: 12,
+            gap: 20,
           }}
         >
-          {loadingMsgs
-            ? [0, 0.1, 0.2].map((d, i) => (
+          {loading
+            ? [0, 0.12, 0.24].map((d, i) => (
                 <div
                   key={i}
                   style={{
-                    borderRadius: "var(--r-l,14px)",
-                    border: "1px solid var(--brd,#e5e7eb)",
-                    background: "var(--bg2,#fff)",
-                    overflow: "hidden",
+                    display: "flex",
+                    gap: 12,
+                    flexDirection: i % 2 === 0 ? "row" : "row-reverse",
                   }}
                 >
+                  <Skel w={36} h={36} r="50%" d={d} />
                   <div
                     style={{
-                      padding: "12px 16px",
-                      borderBottom: "1px solid var(--brd,#e5e7eb)",
-                      display: "flex",
-                      alignItems: "center",
-                      gap: 10,
-                    }}
-                  >
-                    <Skel w={28} h={28} r="50%" delay={d} />
-                    <div
-                      style={{
-                        display: "flex",
-                        flexDirection: "column",
-                        gap: 5,
-                      }}
-                    >
-                      <Skel w={140} h={11} delay={d + 0.05} />
-                      <Skel w={80} h={10} delay={d + 0.1} />
-                    </div>
-                  </div>
-                  <div
-                    style={{
-                      padding: "14px 18px",
+                      flex: 1,
+                      maxWidth: "68%",
                       display: "flex",
                       flexDirection: "column",
-                      gap: 8,
+                      gap: 7,
                     }}
                   >
-                    <Skel w="90%" h={12} delay={d + 0.08} />
-                    <Skel w="70%" h={12} delay={d + 0.12} />
+                    <Skel w="35%" h={10} d={d + 0.05} />
+                    <Skel w="100%" h={64} r={12} d={d + 0.08} />
                   </div>
                 </div>
               ))
-            : messages.map((msg) => (
-                <div
-                  key={msg.id}
-                  style={{
-                    borderRadius: "var(--r-l,14px)",
-                    border: "1px solid var(--brd,#e5e7eb)",
-                    background: "var(--bg2,#fff)",
-                    boxShadow: "var(--sh-s,0 1px 3px rgba(0,0,0,.07))",
-                    overflow: "hidden",
-                  }}
-                >
+            : msgs.map((msg, idx) => {
+                const mine = msg.side === "org";
+                return (
                   <div
+                    key={msg.id}
                     style={{
                       display: "flex",
-                      alignItems: "center",
                       gap: 10,
-                      padding: "12px 16px 10px",
-                      borderBottom: "1px solid var(--brd,#e5e7eb)",
-                      background: msg.side === "org" ? T.orgLight : T.custLight,
+                      alignItems: "flex-end",
+                      flexDirection: mine ? "row-reverse" : "row",
+                      animation:
+                        idx === msgs.length - 1
+                          ? "ti-pop .22s cubic-bezier(.16,1,.3,1)"
+                          : undefined,
                     }}
                   >
-                    <Avatar
+                    <Av
                       initials={msg.initials}
                       color={msg.avatarColor}
-                      size={28}
+                      size={30}
                     />
-                    <div style={{ flex: 1, minWidth: 0 }}>
-                      <div
+                    <div
+                      style={{
+                        maxWidth: "68%",
+                        display: "flex",
+                        flexDirection: "column",
+                        gap: 4,
+                        alignItems: mine ? "flex-end" : "flex-start",
+                      }}
+                    >
+                      <span
                         style={{
-                          fontSize: 12,
-                          fontWeight: 700,
-                          display: "flex",
-                          alignItems: "center",
-                          gap: 6,
+                          fontSize: 11,
+                          fontWeight: 600,
+                          color: C.ink4,
+                          paddingLeft: mine ? 0 : 2,
+                          paddingRight: mine ? 2 : 0,
                         }}
                       >
-                        {msg.from}
-                        <span
-                          style={{
-                            fontSize: 10,
-                            fontWeight: 700,
-                            padding: "2px 7px",
-                            borderRadius: 20,
-                            background:
-                              msg.side === "org" ? "#EDE9FC" : "#D0F5E8",
-                            color: msg.side === "org" ? T.orgDark : T.custDark,
-                          }}
-                        >
-                          {msg.label}
-                        </span>
-                      </div>
+                        {msg.from} · {msg.time}
+                      </span>
                       <div
+                        className="ti-msg-body"
                         style={{
-                          fontSize: 10.5,
-                          color: "var(--ink4,#6b7280)",
-                          marginTop: 1,
-                          fontFamily: "monospace",
+                          fontSize: 13.5,
+                          lineHeight: 1.75,
+                          padding: "11px 16px",
+                          borderRadius: mine
+                            ? "16px 4px 16px 16px"
+                            : "4px 16px 16px 16px",
+                          color: mine ? "#fff" : C.ink2,
+                          background: mine ? C.pGrad : C.bg2,
+                          boxShadow: mine
+                            ? `0 4px 14px ${C.pGlow}`
+                            : `0 1px 3px rgba(0,0,0,.06), inset 0 0 0 1px ${C.brd}`,
                         }}
-                      >
-                        {msg.time}
-                      </div>
+                        dangerouslySetInnerHTML={{ __html: msg.body }}
+                      />
                     </div>
                   </div>
-                  <div
-                    className="ti-msg-body"
-                    style={{
-                      fontSize: 13.5,
-                      lineHeight: 1.8,
-                      color: "var(--ink,#111)",
-                      padding: "14px 18px",
-                    }}
-                    dangerouslySetInnerHTML={{ __html: msg.body }}
-                  />
-                </div>
-              ))}
+                );
+              })}
         </div>
       </div>
 
       {/* Composer */}
       <div
         style={{
-          background: "var(--bg2,#fff)",
-          borderTop: `2px solid ${T.orgBorder}`,
           flexShrink: 0,
+          background: C.bg2,
+          borderTop: `1px solid ${C.brd}`,
+          padding: "14px 24px 18px",
         }}
       >
-        <div
-          style={{ maxWidth: 860, margin: "0 auto", padding: "14px 22px 16px" }}
-        >
-          <div
-            style={{
-              fontSize: 12,
-              color: "var(--ink4,#6b7280)",
-              marginBottom: 8,
-            }}
-          >
-            Replying as{" "}
-            <span style={{ fontWeight: 700, color: T.org }}>
-              Organisation · rep@zotra.ai
-            </span>
-          </div>
-          <textarea
-            value={replyText}
-            onChange={(e) => setReplyText(e.target.value)}
-            placeholder="Write your reply…"
-            rows={4}
-            style={{
-              width: "100%",
-              border: "1px solid var(--brd2,#d1d5db)",
-              borderRadius: "var(--r-m,10px)",
-              padding: "11px 14px",
-              fontSize: 13,
-              resize: "vertical",
-              lineHeight: 1.7,
-              color: "var(--ink,#111)",
-              background: "var(--bg,#f9fafb)",
-              minHeight: 84,
-              outline: "none",
-              transition: "border-color .12s",
-              fontFamily: "inherit",
-            }}
-            onFocus={(e) => (e.target.style.borderColor = "var(--p,#5552C9)")}
-            onBlur={(e) => (e.target.style.borderColor = "var(--brd2,#d1d5db)")}
-          />
-          <div style={{ display: "flex", gap: 8, marginTop: 10 }}>
-            <button
-              onClick={sendReply}
+        <div style={{ maxWidth: 720, margin: "0 auto" }}>
+          <div className="ti-composer">
+            <textarea
+              value={reply}
+              onChange={(e) => setReply(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) send();
+              }}
+              placeholder="Write a reply… (⌘↵ to send)"
+              rows={3}
               style={{
-                padding: "8px 18px",
-                borderRadius: "var(--r-s,6px)",
-                fontSize: 13,
-                fontWeight: 700,
+                display: "block",
+                width: "100%",
                 border: "none",
-                background: "var(--p,#5552C9)",
-                color: "#fff",
-                cursor: "pointer",
-                boxShadow: "0 2px 8px var(--p,#5552C9)44",
-              }}
-            >
-              Send reply
-            </button>
-            <button
-              onClick={() => setReplyText("")}
-              style={{
-                padding: "8px 16px",
-                borderRadius: "var(--r-s,6px)",
-                fontSize: 13,
-                fontWeight: 600,
-                border: "1px solid var(--brd2,#d1d5db)",
+                outline: "none",
+                padding: "13px 16px 6px",
+                fontSize: 13.5,
+                resize: "none",
+                lineHeight: 1.7,
+                color: C.ink,
                 background: "transparent",
-                cursor: "pointer",
-                color: "var(--ink4,#6b7280)",
                 fontFamily: "inherit",
+                minHeight: 78,
+              }}
+            />
+            <div
+              style={{
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "space-between",
+                padding: "8px 12px 10px",
               }}
             >
-              Clear
-            </button>
+              <span style={{ fontSize: 11.5, color: C.ink4 }}>
+                From{" "}
+                <span style={{ color: C.p, fontWeight: 600 }}>
+                  rep@zotra.ai
+                </span>
+              </span>
+              <div style={{ display: "flex", gap: 6 }}>
+                <button onClick={() => setReply("")} className="ti-btn-ghost">
+                  Discard
+                </button>
+                <button
+                  onClick={send}
+                  disabled={sending}
+                  className={
+                    sending ? "ti-btn-primary disabled" : "ti-btn-primary"
+                  }
+                >
+                  {sending ? "Sending…" : "Send reply"}
+                </button>
+              </div>
+            </div>
           </div>
         </div>
       </div>
@@ -839,7 +751,7 @@ const ThreadDetail: React.FC<{
   );
 };
 
-// ── Compose Modal ─────────────────────────────────────────────────────────────
+// ── Compose modal ─────────────────────────────────────────────────────────────
 
 const ComposeModal: React.FC<{
   orgId: string;
@@ -851,14 +763,14 @@ const ComposeModal: React.FC<{
   const [body, setBody] = useState("");
   const [sending, setSending] = useState(false);
 
-  const handleSend = async () => {
+  const send = async () => {
     if (!to.trim() || !subject.trim()) {
       onToast("Fill in To and Subject");
       return;
     }
     setSending(true);
     try {
-      await funcFetch("/test/mailbox/send", orgId, undefined, {
+      await inboxFetch("/test/mailbox/send", undefined, {
         method: "POST",
         body: JSON.stringify({
           organisation_id: orgId,
@@ -867,10 +779,12 @@ const ComposeModal: React.FC<{
           to_emails: to,
           subject,
           body: `<p>${body.replace(/\n/g, "<br>")}</p>`,
+          sent_at: new Date().toISOString(),
+          created_at: new Date().toISOString(),
           created_by: "tester",
         }),
       });
-      onToast("Message sent to " + to);
+      onToast("Sent to " + to);
       onClose();
     } catch {
       onToast("Failed to send");
@@ -885,100 +799,123 @@ const ComposeModal: React.FC<{
       style={{
         position: "fixed",
         inset: 0,
-        background: "rgba(0,0,0,.4)",
+        background: "rgba(10,10,20,.45)",
         display: "flex",
         alignItems: "center",
         justifyContent: "center",
         zIndex: 1000,
-        backdropFilter: "blur(2px)",
+        backdropFilter: "blur(6px)",
       }}
     >
       <div
         style={{
-          background: "var(--bg2,#fff)",
-          borderRadius: "var(--r-l,14px)",
-          boxShadow: "var(--sh-l,0 12px 40px rgba(0,0,0,.18))",
-          width: 560,
-          maxWidth: "92vw",
+          background: C.bg2,
+          borderRadius: 18,
+          boxShadow: "0 24px 64px rgba(0,0,0,.22), 0 0 0 1px rgba(0,0,0,.05)",
+          width: 580,
+          maxWidth: "94vw",
           overflow: "hidden",
+          animation: "ti-rise .2s cubic-bezier(.16,1,.3,1)",
         }}
       >
+        {/* Modal header */}
         <div
           style={{
             display: "flex",
             alignItems: "center",
             justifyContent: "space-between",
-            padding: "14px 20px",
-            borderBottom: "1px solid var(--brd,#e5e7eb)",
-            background: T.orgLight,
+            padding: "16px 22px",
+            borderBottom: `1px solid ${C.brd}`,
+            background: `linear-gradient(to bottom, ${C.pSoft}, ${C.bg2})`,
           }}
         >
-          <span style={{ fontSize: 14, fontWeight: 700, color: T.orgDark }}>
-            New message · Organisation mailbox
-          </span>
-          <button
-            onClick={onClose}
-            style={{
-              width: 26,
-              height: 26,
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              border: "none",
-              background: "transparent",
-              cursor: "pointer",
-              borderRadius: "var(--r-s,6px)",
-              color: "var(--ink4,#6b7280)",
-              fontSize: 16,
-            }}
-          >
+          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+            <div
+              style={{
+                width: 32,
+                height: 32,
+                borderRadius: 9,
+                background: C.pGrad,
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+              }}
+            >
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="white">
+                <path d="M20 4H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2zm0 4l-8 5-8-5V6l8 5 8-5v2z" />
+              </svg>
+            </div>
+            <div>
+              <div style={{ fontSize: 14, fontWeight: 800, color: C.ink }}>
+                New message
+              </div>
+              <div style={{ fontSize: 11, color: C.ink4 }}>
+                from rep@zotra.ai
+              </div>
+            </div>
+          </div>
+          <button onClick={onClose} className="ti-close-btn">
             ✕
           </button>
         </div>
+
+        {/* To / Subject */}
         {[
-          ["To", to, setTo, "email@address.com"],
-          ["Subject", subject, setSubject, "Email subject…"],
-        ].map(([lbl, val, setter, ph]) => (
+          {
+            lbl: "To",
+            val: to,
+            set: setTo,
+            ph: "recipient@company.com",
+            type: "email",
+          },
+          {
+            lbl: "Subject",
+            val: subject,
+            set: setSubject,
+            ph: "Subject line…",
+            type: "text",
+          },
+        ].map(({ lbl, val, set, ph, type }) => (
           <div
-            key={lbl as string}
+            key={lbl}
             style={{
               display: "flex",
               alignItems: "center",
               gap: 12,
-              padding: "10px 20px",
-              borderBottom: "1px solid var(--brd,#e5e7eb)",
+              padding: "11px 22px",
+              borderBottom: `1px solid ${C.brd}`,
             }}
           >
             <label
               style={{
-                fontSize: 12,
-                fontWeight: 600,
-                color: "var(--ink4,#6b7280)",
+                fontSize: 11,
+                fontWeight: 700,
+                color: C.ink4,
                 minWidth: 56,
+                textTransform: "uppercase",
+                letterSpacing: ".05em",
               }}
             >
-              {lbl as string}
+              {lbl}
             </label>
             <input
+              type={type}
+              value={val}
+              onChange={(e) => set(e.target.value)}
+              placeholder={ph}
               style={{
                 flex: 1,
                 border: "none",
                 outline: "none",
-                fontSize: 13,
+                fontSize: 13.5,
                 fontFamily: "inherit",
-                color: "var(--ink,#111)",
+                color: C.ink,
                 background: "transparent",
               }}
-              value={val as string}
-              onChange={(e) =>
-                (setter as React.Dispatch<React.SetStateAction<string>>)(
-                  e.target.value,
-                )
-              }
-              placeholder={ph as string}
             />
           </div>
         ))}
+
         <textarea
           value={body}
           onChange={(e) => setBody(e.target.value)}
@@ -988,56 +925,38 @@ const ComposeModal: React.FC<{
             width: "100%",
             border: "none",
             outline: "none",
-            padding: "14px 20px",
-            fontSize: 13,
+            padding: "14px 22px",
+            fontSize: 13.5,
             fontFamily: "inherit",
             resize: "none",
-            minHeight: 160,
-            color: "var(--ink,#111)",
-            lineHeight: 1.7,
+            minHeight: 180,
+            color: C.ink,
+            lineHeight: 1.75,
             background: "transparent",
+            boxSizing: "border-box",
           }}
         />
+
+        {/* Footer */}
         <div
           style={{
             display: "flex",
             gap: 8,
-            padding: "12px 20px",
-            borderTop: "1px solid var(--brd,#e5e7eb)",
+            padding: "12px 22px 16px",
+            borderTop: `1px solid ${C.brd}`,
+            justifyContent: "flex-end",
+            background: C.bg,
           }}
         >
-          <button
-            onClick={handleSend}
-            disabled={sending}
-            style={{
-              padding: "8px 18px",
-              borderRadius: "var(--r-s,6px)",
-              fontSize: 13,
-              fontWeight: 700,
-              border: "none",
-              background: "var(--p,#5552C9)",
-              color: "#fff",
-              cursor: "pointer",
-              opacity: sending ? 0.6 : 1,
-            }}
-          >
-            {sending ? "Sending…" : "Send"}
+          <button onClick={onClose} className="ti-btn-ghost">
+            Discard
           </button>
           <button
-            onClick={onClose}
-            style={{
-              padding: "8px 16px",
-              borderRadius: "var(--r-s,6px)",
-              fontSize: 13,
-              fontWeight: 600,
-              border: "1px solid var(--brd2,#d1d5db)",
-              background: "transparent",
-              cursor: "pointer",
-              color: "var(--ink4,#6b7280)",
-              fontFamily: "inherit",
-            }}
+            onClick={send}
+            disabled={sending}
+            className={sending ? "ti-btn-primary disabled" : "ti-btn-primary"}
           >
-            Discard
+            {sending ? "Sending…" : "Send message"}
           </button>
         </div>
       </div>
@@ -1045,162 +964,180 @@ const ComposeModal: React.FC<{
   );
 };
 
-// ── Calendar View ─────────────────────────────────────────────────────────────
+// ── Calendar ──────────────────────────────────────────────────────────────────
 
 const CalendarView: React.FC<{ events: CalEvent[]; loading: boolean }> = ({
   events,
   loading,
 }) => {
-  const thisWeek = events.filter((e) => e.week === "this");
-  const nextWeek = events.filter((e) => e.week === "next");
-  const futureWeek = events.filter((e) => e.week === "future");
-
-  const EventCard = ({ ev }: { ev: CalEvent }) => (
-    <div
-      style={{
-        padding: "13px 16px",
-        borderRadius: "var(--r-m,10px)",
-        background: "var(--bg2,#fff)",
-        border: "1px solid var(--brd,#e5e7eb)",
-        boxShadow: "var(--sh-s,0 1px 3px rgba(0,0,0,.07))",
-        borderLeft: `3px solid ${STATUS_COLOR[ev.status] ?? "var(--ink4)"}`,
-        marginBottom: 8,
-        opacity: ev.status === "cancelled" ? 0.55 : 1,
-      }}
-    >
-      <div
-        style={{
-          display: "flex",
-          justifyContent: "space-between",
-          alignItems: "flex-start",
-          gap: 10,
-          marginBottom: 8,
-        }}
-      >
-        <div
-          style={{
-            fontSize: 13.5,
-            fontWeight: 700,
-            color: "var(--ink,#111)",
-            letterSpacing: "-.1px",
-            flex: 1,
-          }}
-        >
-          {ev.title}
-        </div>
-        <StatusPill status={ev.status} />
-      </div>
-      <div style={{ display: "flex", flexWrap: "wrap", gap: 12 }}>
-        {ev.time && (
-          <span
-            style={{
-              fontSize: 11.5,
-              color: "var(--ink4,#6b7280)",
-              fontFamily: "monospace",
-            }}
-          >
-            ⏰ {ev.time}
-          </span>
-        )}
-        {ev.date && (
-          <span
-            style={{
-              fontSize: 11.5,
-              color: "var(--ink4,#6b7280)",
-              fontFamily: "monospace",
-            }}
-          >
-            {ev.date}
-          </span>
-        )}
-        {ev.attendees && (
-          <span style={{ fontSize: 11.5, color: "var(--ink4,#6b7280)" }}>
-            {ev.attendees}
-          </span>
-        )}
-      </div>
-    </div>
-  );
-
-  const Week = ({ label, evs }: { label: string; evs: CalEvent[] }) => (
-    <div style={{ marginBottom: 28 }}>
-      <div
-        style={{
-          display: "flex",
-          alignItems: "baseline",
-          gap: 8,
-          marginBottom: 12,
-        }}
-      >
-        <div
-          style={{
-            fontSize: 11,
-            fontWeight: 700,
-            textTransform: "uppercase",
-            letterSpacing: ".07em",
-            color: "var(--ink4,#6b7280)",
-          }}
-        >
-          {label}
-        </div>
-        {!loading && evs.length > 0 && (
-          <div
-            style={{ fontSize: 11, color: "var(--ink4,#6b7280)", opacity: 0.5 }}
-          >
-            {evs.length} event{evs.length !== 1 ? "s" : ""}
-          </div>
-        )}
-      </div>
-      {loading ? (
-        [0, 1].map((i) => <CalEventSkeleton key={i} delay={i * 0.1} />)
-      ) : evs.length === 0 ? (
-        <div
-          style={{
-            fontSize: 13,
-            color: "var(--ink4,#6b7280)",
-            padding: "12px 0",
-          }}
-        >
-          No events scheduled.
-        </div>
-      ) : (
-        evs.map((ev) => <EventCard key={ev.id} ev={ev} />)
-      )}
-    </div>
-  );
+  const weeks: { label: string; key: CalEvent["week"] }[] = [
+    { label: "This week", key: "this" },
+    { label: "Next week", key: "next" },
+    { label: "Further ahead", key: "future" },
+  ];
 
   return (
-    <div style={{ flex: 1, overflowY: "auto", padding: "22px 24px" }}>
-      <div style={{ maxWidth: 720 }}>
-        <Week label="This week" evs={thisWeek} />
-        <div
-          style={{
-            margin: "4px 0 24px",
-            height: 1,
-            background: "var(--brd,#e5e7eb)",
-          }}
-        />
-        <Week label="Next week" evs={nextWeek} />
-        {futureWeek.length > 0 && (
-          <>
-            <div
-              style={{
-                margin: "4px 0 24px",
-                height: 1,
-                background: "var(--brd,#e5e7eb)",
-              }}
-            />
-            <Week label="Future" evs={futureWeek} />
-          </>
-        )}
+    <div style={{ flex: 1, overflowY: "auto", padding: "28px 36px" }}>
+      <div style={{ maxWidth: 700 }}>
+        {weeks.map(({ label, key }) => {
+          const evs = events.filter((e) => e.week === key);
+          if (!loading && evs.length === 0 && key === "future") return null;
+          return (
+            <section key={key} style={{ marginBottom: 40 }}>
+              <div
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 12,
+                  marginBottom: 16,
+                }}
+              >
+                <span
+                  style={{
+                    fontSize: 11,
+                    fontWeight: 800,
+                    textTransform: "uppercase",
+                    letterSpacing: ".09em",
+                    color: C.ink4,
+                  }}
+                >
+                  {label}
+                </span>
+                {!loading && evs.length > 0 && (
+                  <span
+                    style={{
+                      fontSize: 11,
+                      fontWeight: 700,
+                      padding: "1px 8px",
+                      borderRadius: 20,
+                      background: C.pSoft,
+                      color: C.p,
+                    }}
+                  >
+                    {evs.length}
+                  </span>
+                )}
+                <div style={{ flex: 1, height: 1, background: C.brd }} />
+              </div>
+
+              {loading ? (
+                [0, 1].map((i) => (
+                  <div
+                    key={i}
+                    style={{
+                      background: C.bg2,
+                      border: `1px solid ${C.brd}`,
+                      borderRadius: 12,
+                      padding: "16px 18px",
+                      marginBottom: 8,
+                      display: "flex",
+                      flexDirection: "column",
+                      gap: 8,
+                    }}
+                  >
+                    <div
+                      style={{
+                        display: "flex",
+                        justifyContent: "space-between",
+                      }}
+                    >
+                      <Skel w="48%" h={13} d={i * 0.1} />
+                      <Skel w={72} h={22} r={20} d={i * 0.1 + 0.06} />
+                    </div>
+                    <div style={{ display: "flex", gap: 10 }}>
+                      <Skel w={80} h={10} d={i * 0.1 + 0.1} />
+                      <Skel w={130} h={10} d={i * 0.1 + 0.14} />
+                    </div>
+                  </div>
+                ))
+              ) : evs.length === 0 ? (
+                <p style={{ fontSize: 13, color: C.ink4, margin: "6px 0" }}>
+                  Nothing scheduled.
+                </p>
+              ) : (
+                evs.map((ev) => {
+                  const st = STATUS_MAP[ev.status] ?? STATUS_MAP.pending;
+                  return (
+                    <div
+                      key={ev.id}
+                      style={{
+                        background: C.bg2,
+                        border: `1px solid ${C.brd}`,
+                        borderLeft: `3px solid ${st.dot}`,
+                        borderRadius: "0 12px 12px 0",
+                        padding: "14px 18px",
+                        marginBottom: 8,
+                        opacity: ev.status === "cancelled" ? 0.5 : 1,
+                        transition: "box-shadow .12s",
+                      }}
+                    >
+                      <div
+                        style={{
+                          display: "flex",
+                          justifyContent: "space-between",
+                          alignItems: "flex-start",
+                          gap: 10,
+                          marginBottom: 8,
+                        }}
+                      >
+                        <span
+                          style={{
+                            fontSize: 14,
+                            fontWeight: 700,
+                            color: C.ink,
+                            letterSpacing: "-.1px",
+                          }}
+                        >
+                          {ev.title}
+                        </span>
+                        <Pill status={ev.status} />
+                      </div>
+                      <div
+                        style={{ display: "flex", flexWrap: "wrap", gap: 14 }}
+                      >
+                        {ev.time && (
+                          <span
+                            style={{
+                              fontSize: 12,
+                              color: C.ink3,
+                              fontFamily: "monospace",
+                            }}
+                          >
+                            ⏰ {ev.time}
+                          </span>
+                        )}
+                        {ev.date && (
+                          <span
+                            style={{
+                              fontSize: 12,
+                              color: C.ink3,
+                              fontFamily: "monospace",
+                            }}
+                          >
+                            {ev.date}
+                          </span>
+                        )}
+                        {ev.attendees && (
+                          <span style={{ fontSize: 12, color: C.ink3 }}>
+                            👤 {ev.attendees}
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })
+              )}
+            </section>
+          );
+        })}
       </div>
     </div>
   );
 };
 
-// ── InboxList ─────────────────────────────────────────────────────────────────
+// ── Thread list ───────────────────────────────────────────────────────────────
 
-const InboxList: React.FC<{
+const ThreadList: React.FC<{
   threads: Thread[];
   view: PortalView;
   folder: NavFolder;
@@ -1209,11 +1146,19 @@ const InboxList: React.FC<{
   onSelect: (t: Thread) => void;
   onCompose: () => void;
 }> = ({ threads, view, folder, orgName, loading, onSelect, onCompose }) => {
-  const isOrg = view === "org";
-  const accent = isOrg ? T.org : T.cust;
-  const accentLight = isOrg ? T.orgLight : T.custLight;
+  const [q, setQ] = useState("");
+  const accent = view === "org" ? C.p : C.t;
+  const accentSoft = view === "org" ? C.pSoft : C.tSoft;
   const unread = threads.filter((t) => t.unread).length;
-  const folderLabel = folder === "inbox" ? "Inbox" : "Sent";
+  const label = folder === "inbox" ? "Inbox" : "Sent";
+
+  const filtered = q.trim()
+    ? threads.filter((t) =>
+        [t.from, t.subject, t.preview].some((s) =>
+          s.toLowerCase().includes(q.toLowerCase()),
+        ),
+      )
+    : threads;
 
   return (
     <div
@@ -1227,105 +1172,137 @@ const InboxList: React.FC<{
       {/* Toolbar */}
       <div
         style={{
+          padding: "16px 28px 14px",
+          borderBottom: `1px solid ${C.brd}`,
+          background: C.bg2,
+          flexShrink: 0,
           display: "flex",
           alignItems: "center",
           justifyContent: "space-between",
-          padding: "13px 22px 11px",
-          borderBottom: "1px solid var(--brd,#e5e7eb)",
-          background: "var(--bg2,#fff)",
-          flexShrink: 0,
+          gap: 14,
         }}
       >
         <div>
-          <div
-            style={{ fontSize: 16, fontWeight: 700, letterSpacing: "-.3px" }}
-          >
-            {folderLabel}
-          </div>
-          <div
-            style={{ fontSize: 11, color: "var(--ink4,#6b7280)", marginTop: 2 }}
-          >
-            {orgName} ·{" "}
-            {loading ? (
-              <span style={{ opacity: 0.4 }}>loading…</span>
-            ) : (
-              <>
-                <span style={{ fontFamily: "monospace", fontSize: 10 }}>
-                  {threads.length}
-                </span>{" "}
-                thread{threads.length !== 1 ? "s" : ""}
+          <div style={{ display: "flex", alignItems: "baseline", gap: 10 }}>
+            <h1
+              style={{
+                margin: 0,
+                fontSize: 20,
+                fontWeight: 900,
+                letterSpacing: "-.6px",
+                color: C.ink,
+              }}
+            >
+              {label}
+            </h1>
+            {!loading && (
+              <span style={{ fontSize: 12.5, color: C.ink4 }}>
+                {filtered.length} thread{filtered.length !== 1 ? "s" : ""}
                 {unread > 0 && (
-                  <>
-                    ,{" "}
-                    <span style={{ color: accent, fontWeight: 600 }}>
-                      {unread} unread
-                    </span>
-                  </>
+                  <span style={{ color: accent, fontWeight: 700 }}>
+                    {" "}
+                    · {unread} unread
+                  </span>
                 )}
-              </>
+              </span>
             )}
           </div>
-        </div>
-        <button
-          onClick={onCompose}
-          style={{
-            display: "inline-flex",
-            alignItems: "center",
-            gap: 6,
-            fontSize: 13,
-            fontWeight: 700,
-            padding: "7px 14px",
-            borderRadius: "var(--r-s,6px)",
-            border: "none",
-            background: "var(--p,#5552C9)",
-            color: "#fff",
-            cursor: "pointer",
-            boxShadow: "0 2px 8px var(--p,#5552C9)40",
-          }}
-        >
-          + Compose
-        </button>
-      </div>
-
-      {/* Column headers */}
-      <div
-        style={{
-          display: "grid",
-          gridTemplateColumns: "48px 1fr 280px 90px",
-          alignItems: "center",
-          padding: "0 22px",
-          height: 32,
-          borderBottom: "1px solid var(--brd,#e5e7eb)",
-          gap: 14,
-          background: "var(--bg,#f9fafb)",
-          flexShrink: 0,
-        }}
-      >
-        {["", "From", "Subject & Preview", "Time"].map((h, i) => (
-          <div
-            key={i}
-            style={{
-              fontSize: 10,
-              fontWeight: 700,
-              textTransform: "uppercase",
-              letterSpacing: ".06em",
-              color: "var(--ink4,#6b7280)",
-              textAlign: i === 3 ? "right" : "left",
-            }}
-          >
-            {h}
+          <div style={{ fontSize: 11.5, color: C.ink4, marginTop: 2 }}>
+            {orgName}
           </div>
-        ))}
+        </div>
+
+        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          {/* Search */}
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 7,
+              background: C.bg,
+              border: `1.5px solid ${C.brd2}`,
+              borderRadius: 10,
+              padding: "7px 12px",
+              minWidth: 220,
+              transition: "border-color .15s",
+            }}
+            onFocusCapture={(e) => (e.currentTarget.style.borderColor = C.p)}
+            onBlurCapture={(e) => (e.currentTarget.style.borderColor = C.brd2)}
+          >
+            <svg
+              width="13"
+              height="13"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke={C.ink4}
+              strokeWidth="2.5"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            >
+              <circle cx="11" cy="11" r="8" />
+              <line x1="21" y1="21" x2="16.65" y2="16.65" />
+            </svg>
+            <input
+              value={q}
+              onChange={(e) => setQ(e.target.value)}
+              placeholder="Search…"
+              style={{
+                border: "none",
+                outline: "none",
+                fontSize: 13,
+                color: C.ink,
+                background: "transparent",
+                fontFamily: "inherit",
+                width: "100%",
+              }}
+            />
+          </div>
+          <button
+            onClick={onCompose}
+            className="ti-btn-primary"
+            style={{ whiteSpace: "nowrap" }}
+          >
+            ✦ Compose
+          </button>
+        </div>
       </div>
 
-      {/* Rows */}
+      {/* List body */}
       <div style={{ flex: 1, overflowY: "auto" }}>
         {loading &&
-          Array.from({ length: 7 }).map((_, i) => (
-            <ThreadRowSkeleton key={i} delay={i * 0.04} />
+          Array.from({ length: 9 }).map((_, i) => (
+            <div
+              key={i}
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: 14,
+                padding: "15px 28px",
+                borderBottom: `1px solid ${C.brd}`,
+              }}
+            >
+              <Skel w={40} h={40} r="50%" d={i * 0.04} />
+              <div
+                style={{
+                  flex: 1,
+                  display: "flex",
+                  flexDirection: "column",
+                  gap: 7,
+                }}
+              >
+                <div
+                  style={{ display: "flex", justifyContent: "space-between" }}
+                >
+                  <Skel w="28%" h={11} d={i * 0.04 + 0.04} />
+                  <Skel w={40} h={10} d={i * 0.04 + 0.04} />
+                </div>
+                <Skel w="60%" h={11} d={i * 0.04 + 0.08} />
+                <Skel w="45%" h={10} d={i * 0.04 + 0.12} />
+              </div>
+            </div>
           ))}
 
-        {!loading && threads.length === 0 && (
+        {!loading && filtered.length === 0 && (
           <div
             style={{
               display: "flex",
@@ -1333,133 +1310,155 @@ const InboxList: React.FC<{
               alignItems: "center",
               justifyContent: "center",
               gap: 10,
-              color: "var(--ink4,#6b7280)",
-              padding: 60,
+              padding: "80px 20px",
             }}
           >
-            <div style={{ fontSize: 28, opacity: 0.3 }}>📭</div>
-            <div
-              style={{
-                fontSize: 15,
-                fontWeight: 700,
-                color: "var(--ink3,#374151)",
-              }}
-            >
-              No messages
+            <div style={{ fontSize: 36, opacity: 0.2 }}>📭</div>
+            <div style={{ fontSize: 15, fontWeight: 800, color: C.ink2 }}>
+              {q ? "No matches" : "All clear"}
             </div>
-            <div style={{ fontSize: 13 }}>
-              This {folderLabel.toLowerCase()} is empty.
+            <div style={{ fontSize: 13, color: C.ink4 }}>
+              {q
+                ? `Nothing matches "${q}"`
+                : `This ${label.toLowerCase()} is empty.`}
             </div>
           </div>
         )}
 
         {!loading &&
-          threads.map((t) => (
+          filtered.map((t) => (
             <div
               key={t.id}
-              className="ti-thread-row"
+              className="ti-row"
               onClick={() => onSelect(t)}
               style={{
-                display: "grid",
-                gridTemplateColumns: "48px 1fr 280px 90px",
+                display: "flex",
                 alignItems: "center",
-                padding: "0 22px",
-                height: 58,
-                borderBottom: "1px solid var(--brd,#e5e7eb)",
-                cursor: "pointer",
                 gap: 14,
-                background: t.unread ? accentLight + "44" : "transparent",
+                padding: "14px 28px",
+                borderBottom: `1px solid ${C.brd}`,
+                cursor: "pointer",
                 position: "relative",
+                background: t.unread ? accentSoft + "60" : C.bg2,
               }}
             >
+              {/* Unread accent bar */}
               {t.unread && (
                 <span
                   style={{
                     position: "absolute",
                     left: 0,
-                    top: "25%",
-                    bottom: "25%",
+                    top: "18%",
+                    bottom: "18%",
                     width: 3,
                     borderRadius: "0 3px 3px 0",
                     background: accent,
                   }}
                 />
               )}
-              <Avatar
+
+              <Av
                 initials={t.initials}
                 color={t.avatarColor}
-                size={34}
-                unread={t.unread}
+                size={40}
+                ring={t.unread}
               />
-              <div
-                style={{
-                  fontSize: 13,
-                  fontWeight: t.unread ? 700 : 500,
-                  color: t.unread ? "var(--ink,#111)" : "var(--ink3,#374151)",
-                  display: "flex",
-                  alignItems: "center",
-                  gap: 6,
-                  minWidth: 0,
-                  overflow: "hidden",
-                }}
-              >
-                {t.unread && (
-                  <span
-                    style={{
-                      width: 6,
-                      height: 6,
-                      borderRadius: "50%",
-                      background: accent,
-                      flexShrink: 0,
-                    }}
-                  />
-                )}
-                <span
-                  style={{
-                    whiteSpace: "nowrap",
-                    overflow: "hidden",
-                    textOverflow: "ellipsis",
-                  }}
-                >
-                  {t.from}
-                </span>
-              </div>
-              <div style={{ minWidth: 0 }}>
+
+              <div style={{ flex: 1, minWidth: 0 }}>
+                {/* Line 1 */}
                 <div
                   style={{
-                    fontSize: 13,
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "space-between",
+                    marginBottom: 3,
+                  }}
+                >
+                  <div
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      gap: 7,
+                      minWidth: 0,
+                    }}
+                  >
+                    {t.unread && (
+                      <span
+                        style={{
+                          width: 6,
+                          height: 6,
+                          borderRadius: "50%",
+                          background: accent,
+                          flexShrink: 0,
+                        }}
+                      />
+                    )}
+                    <span
+                      style={{
+                        fontSize: 13.5,
+                        fontWeight: t.unread ? 700 : 500,
+                        color: C.ink,
+                        overflow: "hidden",
+                        textOverflow: "ellipsis",
+                        whiteSpace: "nowrap",
+                        maxWidth: 220,
+                      }}
+                    >
+                      {t.from}
+                    </span>
+                    <span
+                      style={{
+                        fontSize: 10.5,
+                        fontWeight: 600,
+                        padding: "1px 7px",
+                        borderRadius: 20,
+                        flexShrink: 0,
+                        background:
+                          t.direction === "Inbound" ? C.tSoft : C.pSoft,
+                        color: t.direction === "Inbound" ? C.tDark : C.pDark,
+                      }}
+                    >
+                      {t.direction}
+                    </span>
+                  </div>
+                  <span
+                    style={{
+                      fontSize: 11,
+                      color: C.ink4,
+                      fontFamily: "monospace",
+                      flexShrink: 0,
+                      marginLeft: 8,
+                    }}
+                  >
+                    {t.time}
+                  </span>
+                </div>
+                {/* Line 2 */}
+                <div
+                  style={{
+                    fontSize: 13.5,
                     fontWeight: t.unread ? 600 : 400,
-                    color: "var(--ink,#111)",
+                    color: t.unread ? C.ink : C.ink2,
                     whiteSpace: "nowrap",
                     overflow: "hidden",
                     textOverflow: "ellipsis",
+                    marginBottom: 2,
                   }}
                 >
                   {t.subject}
                 </div>
+                {/* Line 3 */}
                 <div
                   style={{
-                    fontSize: 11.5,
-                    color: "var(--ink4,#6b7280)",
+                    fontSize: 12,
+                    color: C.ink4,
                     whiteSpace: "nowrap",
                     overflow: "hidden",
                     textOverflow: "ellipsis",
-                    marginTop: 1,
                   }}
                 >
                   {t.preview}
                 </div>
-              </div>
-              <div
-                style={{
-                  fontSize: 11,
-                  color: "var(--ink4,#6b7280)",
-                  textAlign: "right",
-                  whiteSpace: "nowrap",
-                  fontFamily: "monospace",
-                }}
-              >
-                {t.time}
               </div>
             </div>
           ))}
@@ -1468,179 +1467,287 @@ const InboxList: React.FC<{
   );
 };
 
-// ── Left Sidebar ──────────────────────────────────────────────────────────────
+// ── Sidebar ───────────────────────────────────────────────────────────────────
 
-const PortalSidebar: React.FC<{
-  orgs: Org[];
-  activeOrgIdx: number;
+const Sidebar: React.FC<{
+  org: Org;
   activeView: PortalView;
   navFolder: NavFolder;
   unreadCount: number;
   calCount: number;
-  onOrgChange: (i: number) => void;
   onViewChange: (v: PortalView) => void;
   onFolderChange: (f: NavFolder) => void;
 }> = ({
-  orgs,
-  activeOrgIdx,
+  org,
   activeView,
   navFolder,
   unreadCount,
   calCount,
-  onOrgChange,
   onViewChange,
   onFolderChange,
 }) => {
-  const NavBtn = ({
-    id,
-    label,
-    badge = 0,
-    active,
-  }: {
-    id: string;
-    label: string;
-    badge?: number;
-    active: boolean;
-  }) => (
-    <button
-      className={"ti-nav-btn" + (active ? " active" : "")}
-      onClick={() => onFolderChange(id as NavFolder)}
-    >
-      <span style={{ flex: 1 }}>{label}</span>
-      {badge > 0 && (
-        <span
-          style={{
-            fontSize: 10,
-            fontWeight: 700,
-            padding: "1px 6px",
-            borderRadius: 20,
-            background: active ? "var(--p,#5552C9)" : "var(--bg3,#f3f4f6)",
-            color: active ? "#fff" : "var(--ink4,#6b7280)",
-          }}
+  const navItems = [
+    {
+      id: "inbox",
+      label: "Inbox",
+      badge: unreadCount,
+      icon: (
+        <svg
+          width="15"
+          height="15"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="2"
+          strokeLinecap="round"
+          strokeLinejoin="round"
         >
-          {badge}
-        </span>
-      )}
-    </button>
-  );
-
-  const SectionLabel = ({ text }: { text: string }) => (
-    <div
-      style={{
-        fontSize: 9.5,
-        fontWeight: 700,
-        textTransform: "uppercase",
-        letterSpacing: ".06em",
-        color: "var(--ink4,#6b7280)",
-        padding: "10px 10px 4px",
-      }}
-    >
-      {text}
-    </div>
-  );
+          <polyline points="22 12 16 12 14 15 10 15 8 12 2 12" />
+          <path d="M5.45 5.11L2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z" />
+        </svg>
+      ),
+    },
+    {
+      id: "sent",
+      label: "Sent",
+      badge: 0,
+      icon: (
+        <svg
+          width="15"
+          height="15"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="2"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+        >
+          <line x1="22" y1="2" x2="11" y2="13" />
+          <polygon points="22 2 15 22 11 13 2 9 22 2" />
+        </svg>
+      ),
+    },
+    {
+      id: "calendar",
+      label: "Calendar",
+      badge: calCount,
+      icon: (
+        <svg
+          width="15"
+          height="15"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="2"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+        >
+          <rect x="3" y="4" width="18" height="18" rx="2" ry="2" />
+          <line x1="16" y1="2" x2="16" y2="6" />
+          <line x1="8" y1="2" x2="8" y2="6" />
+          <line x1="3" y1="10" x2="21" y2="10" />
+        </svg>
+      ),
+    },
+  ];
 
   return (
-    <div
+    <aside
       style={{
-        width: 210,
+        width: 230,
         flexShrink: 0,
-        borderRight: "1px solid var(--brd,#e5e7eb)",
-        background: "var(--bg2,#fafaf8)",
+        borderRight: `1px solid ${C.brd}`,
+        background: C.bg2,
         display: "flex",
         flexDirection: "column",
-        padding: "16px 8px",
+        padding: "16px 12px 14px",
       }}
     >
-      <div style={{ paddingLeft: 10, marginBottom: 18 }}>
+      {/* Org identity */}
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: 10,
+          padding: "10px 10px 12px",
+          marginBottom: 6,
+          borderBottom: `1px solid ${C.brd}`,
+        }}
+      >
         <div
           style={{
-            fontSize: 13,
+            width: 36,
+            height: 36,
+            borderRadius: 10,
+            background: C.pGrad,
+            color: "#fff",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            fontSize: 12,
             fontWeight: 800,
-            color: "var(--p,#5552C9)",
-            letterSpacing: "-.2px",
+            flexShrink: 0,
+            letterSpacing: ".02em",
           }}
         >
-          Test Inbox
+          {org.initials}
         </div>
-        <div
-          style={{ fontSize: 10, color: "var(--ink4,#6b7280)", marginTop: 2 }}
-        >
-          Test Portal
-        </div>
-      </div>
-
-      <SectionLabel text="Organisation" />
-      {orgs.map((o, i) => (
-        <button
-          key={o.id}
-          className={"ti-nav-btn" + (i === activeOrgIdx ? " active" : "")}
-          onClick={() => onOrgChange(i)}
-        >
+        <div style={{ minWidth: 0 }}>
           <div
             style={{
-              width: 22,
-              height: 22,
-              borderRadius: 6,
-              background: o.color,
-              color: "#fff",
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              fontSize: 8,
-              fontWeight: 800,
-              flexShrink: 0,
-            }}
-          >
-            {o.initials}
-          </div>
-          <span
-            style={{
-              fontSize: 12,
-              flex: 1,
+              fontSize: 13,
+              fontWeight: 700,
+              color: C.ink,
               overflow: "hidden",
               textOverflow: "ellipsis",
               whiteSpace: "nowrap",
             }}
           >
-            {o.name}
-          </span>
-        </button>
-      ))}
+            {org.name}
+          </div>
+          <div style={{ fontSize: 10.5, color: C.ink4, marginTop: 1 }}>
+            Test Inbox
+          </div>
+        </div>
+      </div>
 
-      <SectionLabel text="View" />
-      {(["org", "cust"] as PortalView[]).map((v) => (
-        <button
-          key={v}
-          className={"ti-nav-btn" + (activeView === v ? " active" : "")}
-          onClick={() => onViewChange(v)}
+      {/* View switcher — segmented, single source of truth */}
+      <div style={{ padding: "14px 2px 4px" }}>
+        <div
+          style={{
+            fontSize: 10,
+            fontWeight: 800,
+            textTransform: "uppercase",
+            letterSpacing: ".08em",
+            color: C.ink4,
+            marginBottom: 6,
+            paddingLeft: 6,
+          }}
         >
-          {v === "org" ? "🏢 Organisation" : "👤 Customer"}
-        </button>
-      ))}
+          Perspective
+        </div>
+        <div
+          style={{
+            display: "grid",
+            gridTemplateColumns: "1fr 1fr",
+            gap: 3,
+            padding: 3,
+            background: C.bg3,
+            borderRadius: 10,
+            border: `1px solid ${C.brd}`,
+          }}
+        >
+          {(["org", "cust"] as PortalView[]).map((v) => (
+            <button
+              key={v}
+              onClick={() => onViewChange(v)}
+              style={{
+                padding: "7px 6px",
+                borderRadius: 8,
+                border: "none",
+                cursor: "pointer",
+                fontSize: 12,
+                fontWeight: 600,
+                fontFamily: "inherit",
+                textAlign: "center",
+                background: activeView === v ? C.bg2 : "transparent",
+                color: activeView === v ? C.p : C.ink3,
+                boxShadow:
+                  activeView === v ? "0 1px 4px rgba(0,0,0,.1)" : "none",
+                transition: "all .14s",
+              }}
+            >
+              {v === "org" ? "Organisation" : "Customer"}
+            </button>
+          ))}
+        </div>
+      </div>
 
-      <SectionLabel text="Mailbox" />
-      <NavBtn
-        id="inbox"
-        label="Inbox"
-        badge={unreadCount}
-        active={navFolder === "inbox"}
-      />
-      <NavBtn id="sent" label="Sent" active={navFolder === "sent"} />
-      <NavBtn
-        id="calendar"
-        label="Calendar"
-        badge={calCount}
-        active={navFolder === "calendar"}
-      />
-    </div>
+      {/* Nav */}
+      <div style={{ marginTop: 18, flex: 1 }}>
+        <div
+          style={{
+            fontSize: 10,
+            fontWeight: 800,
+            textTransform: "uppercase",
+            letterSpacing: ".08em",
+            color: C.ink4,
+            marginBottom: 6,
+            paddingLeft: 6,
+          }}
+        >
+          Mailbox
+        </div>
+        {navItems.map((item) => {
+          const active = navFolder === item.id;
+          return (
+            <button
+              key={item.id}
+              className={"ti-nav-btn" + (active ? " active" : "")}
+              onClick={() => onFolderChange(item.id as NavFolder)}
+            >
+              <span className="ti-nav-icon">{item.icon}</span>
+              <span style={{ flex: 1 }}>{item.label}</span>
+              {item.badge > 0 && (
+                <span
+                  style={{
+                    fontSize: 10.5,
+                    fontWeight: 700,
+                    minWidth: 18,
+                    height: 18,
+                    padding: "0 5px",
+                    borderRadius: 9,
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    background: active ? C.p : C.bg3,
+                    color: active ? "#fff" : C.ink3,
+                  }}
+                >
+                  {item.badge}
+                </span>
+              )}
+            </button>
+          );
+        })}
+      </div>
+
+      {/* Test mode banner */}
+      <div
+        style={{
+          margin: "0 2px",
+          padding: "8px 12px",
+          borderRadius: 8,
+          background: C.amberBg,
+          border: `1px solid ${C.amberBdr}`,
+          display: "flex",
+          alignItems: "center",
+          gap: 6,
+        }}
+      >
+        <span style={{ fontSize: 12 }}>⚡</span>
+        <span
+          style={{
+            fontSize: 11,
+            fontWeight: 700,
+            color: C.amber,
+            letterSpacing: ".03em",
+          }}
+        >
+          Test mode active
+        </span>
+      </div>
+    </aside>
   );
 };
 
-// ── Main View ─────────────────────────────────────────────────────────────────
+// ── Main ──────────────────────────────────────────────────────────────────────
 
 export default function TestInboxView() {
-  const [orgs, setOrgs] = useState<Org[]>(INITIAL_ORGS);
-  const [activeOrgIdx, setActiveOrgIdx] = useState(0);
+  const tenantId = getTenantId();
+  const { name, initials } = getSessionOrg();
+  const org: Org = { id: tenantId || "unknown", name, initials };
+
   const [activeView, setActiveView] = useState<PortalView>("org");
   const [navFolder, setNavFolder] = useState<NavFolder>("inbox");
   const [threads, setThreads] = useState<Thread[]>([]);
@@ -1655,28 +1762,23 @@ export default function TestInboxView() {
   const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const closeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const org = orgs[activeOrgIdx];
-
   const showToast = useCallback((msg: string) => {
     setToast(msg);
     if (toastTimer.current) clearTimeout(toastTimer.current);
     toastTimer.current = setTimeout(() => setToast(""), 2800);
   }, []);
 
-  // Load threads
   useEffect(() => {
-    if (navFolder === "calendar" || !org) return;
+    if (navFolder === "calendar") return;
     setThreads([]);
     setThreadsLoading(true);
     let cancelled = false;
     const direction = navFolder === "sent" ? "outbound" : "inbound";
-    funcFetch<{ messages: MailMessageOut[] }>(
-      "/test/mailbox/messages",
-      org.id,
-      { direction },
-    )
-      .then((res) => {
-        if (!cancelled) setThreads((res.messages || []).map(adaptMessage));
+    inboxFetch<{ messages: MailMessageOut[] }>("/test/mailbox/messages", {
+      direction,
+    })
+      .then((r) => {
+        if (!cancelled) setThreads((r.messages || []).map(adaptMessage));
       })
       .catch(() => {})
       .finally(() => {
@@ -1685,35 +1787,33 @@ export default function TestInboxView() {
     return () => {
       cancelled = true;
     };
-  }, [org?.id, navFolder, activeView]);
+  }, [org.id, navFolder, activeView]);
 
-  // Load calendar
   useEffect(() => {
-    if (navFolder !== "calendar" || !org) return;
+    if (navFolder !== "calendar") return;
     setCalEvents([]);
     setCalLoading(true);
-    funcFetch<{ events: CalEventOut[] }>("/test/calendar/events", org.id)
-      .then((res) => setCalEvents((res.events || []).map(adaptCalEvent)))
+    inboxFetch<{ events: CalEventOut[] }>("/test/calendar/events")
+      .then((r) => setCalEvents((r.events || []).map(adaptCalEvent)))
       .catch(() => {})
       .finally(() => setCalLoading(false));
-  }, [navFolder, org?.id]);
+  }, [navFolder, org.id]);
 
-  const openThread = async (t: Thread) => {
+  const openThread = (t: Thread) => {
     setSelectedThread(t);
     requestAnimationFrame(() =>
       requestAnimationFrame(() => setPanelVisible(true)),
     );
-    if (t.unread) {
-      setThreads((prev) =>
-        prev.map((x) => (x.id === t.id ? { ...x, unread: false } : x)),
+    if (t.unread)
+      setThreads((p) =>
+        p.map((x) => (x.id === t.id ? { ...x, unread: false } : x)),
       );
-    }
   };
 
   const closePanel = () => {
     setPanelVisible(false);
     if (closeTimer.current) clearTimeout(closeTimer.current);
-    closeTimer.current = setTimeout(() => setSelectedThread(null), 280);
+    closeTimer.current = setTimeout(() => setSelectedThread(null), 300);
   };
 
   const switchView = (v: PortalView) => {
@@ -1723,39 +1823,36 @@ export default function TestInboxView() {
         setActiveView(v);
         setNavFolder("inbox");
       },
-      selectedThread ? 280 : 0,
+      selectedThread ? 300 : 0,
     );
   };
 
   const handleFolderChange = (f: NavFolder) => {
     if (selectedThread) closePanel();
-    setTimeout(() => setNavFolder(f), selectedThread ? 280 : 0);
+    setTimeout(() => setNavFolder(f), selectedThread ? 300 : 0);
   };
 
   const handleRefresh = async () => {
-    if (!org) return;
     showToast("Refreshing…");
     try {
       if (navFolder === "calendar") {
         setCalLoading(true);
-        const res = await funcFetch<{ events: CalEventOut[] }>(
+        const r = await inboxFetch<{ events: CalEventOut[] }>(
           "/test/calendar/events",
-          org.id,
         );
-        setCalEvents((res.events || []).map(adaptCalEvent));
+        setCalEvents((r.events || []).map(adaptCalEvent));
         setCalLoading(false);
       } else {
         setThreadsLoading(true);
-        const direction = navFolder === "sent" ? "outbound" : "inbound";
-        const res = await funcFetch<{ messages: MailMessageOut[] }>(
+        const d = navFolder === "sent" ? "outbound" : "inbound";
+        const r = await inboxFetch<{ messages: MailMessageOut[] }>(
           "/test/mailbox/messages",
-          org.id,
-          { direction },
+          { direction: d },
         );
-        setThreads((res.messages || []).map(adaptMessage));
+        setThreads((r.messages || []).map(adaptMessage));
         setThreadsLoading(false);
       }
-      showToast("Refreshed");
+      showToast("Up to date ✓");
     } catch {
       showToast("Refresh failed");
       setThreadsLoading(false);
@@ -1765,25 +1862,6 @@ export default function TestInboxView() {
 
   const unreadCount = threads.filter((t) => t.unread).length;
 
-  const tabStyle = (active: boolean, color: string): React.CSSProperties => ({
-    display: "flex",
-    alignItems: "center",
-    gap: 7,
-    padding: "0 18px",
-    height: "100%",
-    border: "none",
-    borderBottom: `2.5px solid ${active ? color : "transparent"}`,
-    background: "transparent",
-    color: active ? color : "var(--ink4,#6b7280)",
-    fontSize: 13,
-    fontWeight: active ? 700 : 500,
-    cursor: "pointer",
-    whiteSpace: "nowrap",
-    transition: "color .12s, border-color .12s",
-    letterSpacing: active ? "-.1px" : "0",
-    fontFamily: "inherit",
-  });
-
   return (
     <div
       style={{
@@ -1791,226 +1869,209 @@ export default function TestInboxView() {
         flexDirection: "column",
         height: "100%",
         overflow: "hidden",
-        fontFamily: "var(--font-sans, inherit)",
+        fontFamily: "var(--font-sans,inherit)",
       }}
     >
+      {/* ── Global styles ─────────────────────────────────────────────────── */}
       <style>{`
-        @keyframes ti-pulse { 0%,100%{opacity:1} 50%{opacity:.38} }
-        .ti-nav-btn { display:flex; align-items:center; gap:8px; padding:7px 10px; border-radius:var(--r-s,6px); border:none; width:100%; font-size:12.5px; font-weight:500; cursor:pointer; text-align:left; background:transparent; transition:background .1s; color:var(--ink3,#374151); font-family:inherit; }
-        .ti-nav-btn:hover { background:var(--bg3,#f3f4f6) !important; }
-        .ti-nav-btn.active { background:var(--pp,#EEEEFF); color:var(--p,#5552C9); font-weight:600; }
-        .ti-thread-row { transition:background .08s; }
-        .ti-thread-row:hover { background:var(--bg3,#f3f4f6) !important; }
-        .ti-panel { position:absolute; top:0; right:0; bottom:0; width:63%; min-width:540px; background:var(--bg2,#fff); border-left:1px solid var(--brd2,#d1d5db); box-shadow:-8px 0 40px rgba(0,0,0,.13); transform:translateX(100%); transition:transform .28s cubic-bezier(.32,0,.16,1); z-index:50; overflow:hidden; display:flex; flex-direction:column; }
+        @keyframes ti-sh   { 0%,100%{opacity:1} 50%{opacity:.38} }
+        @keyframes ti-pop  { from{opacity:0;transform:translateY(8px) scale(.97)} to{opacity:1;transform:none} }
+        @keyframes ti-rise { from{opacity:0;transform:translateY(14px) scale(.98)} to{opacity:1;transform:none} }
+        @keyframes ti-toast{ from{opacity:0;transform:translateX(-50%) translateY(10px)} to{opacity:1;transform:translateX(-50%)} }
+
+        /* Sidebar nav button */
+        .ti-nav-btn {
+          display:flex; align-items:center; gap:9px;
+          width:100%; padding:8px 10px; margin-bottom:2px;
+          border-radius:9px; border:none; cursor:pointer; text-align:left;
+          font-size:13.5px; font-weight:500; font-family:inherit;
+          background:transparent; color:var(--ink3,#4B5563);
+          transition:background .1s, color .1s;
+        }
+        .ti-nav-btn:hover { background:var(--bg3,#F1F2F5); }
+        .ti-nav-btn.active {
+          background:var(--pp,#EEEEFF); color:var(--p,#5552C9); font-weight:700;
+        }
+        .ti-nav-btn.active .ti-nav-icon { color:var(--p,#5552C9); }
+        .ti-nav-icon { color:var(--ink4,#9CA3AF); display:flex; align-items:center;
+          flex-shrink:0; transition:color .1s; }
+
+        /* Thread rows */
+        .ti-row { transition:background .07s; }
+        .ti-row:hover { background:var(--bg3,#F1F2F5) !important; }
+
+        /* Back button */
+        .ti-back-btn {
+          display:inline-flex; align-items:center; gap:5px;
+          font-size:12.5px; font-weight:600; color:var(--ink3,#4B5563);
+          border:1px solid var(--brd,#E5E7EB); background:var(--bg,#F7F8FA);
+          cursor:pointer; padding:5px 11px 5px 8px; border-radius:7px;
+          font-family:inherit; transition:background .1s;
+        }
+        .ti-back-btn:hover { background:var(--bg3,#F1F2F5); }
+
+        /* Close button */
+        .ti-close-btn {
+          width:30px; height:30px; display:flex; align-items:center; justify-content:center;
+          border:1px solid var(--brd,#E5E7EB); background:var(--bg,#F7F8FA);
+          cursor:pointer; border-radius:8px; color:var(--ink3,#4B5563);
+          font-size:13px; transition:background .1s;
+        }
+        .ti-close-btn:hover { background:var(--bg3,#F1F2F5); }
+
+        /* Primary button */
+        .ti-btn-primary {
+          display:inline-flex; align-items:center; gap:5px;
+          padding:8px 18px; border-radius:9px; border:none;
+          font-size:13px; font-weight:700; font-family:inherit; cursor:pointer;
+          background:linear-gradient(135deg,#5552C9 0%,#7B78E8 100%);
+          color:#fff; box-shadow:0 2px 10px rgba(85,82,201,.3);
+          transition:opacity .12s, box-shadow .12s;
+        }
+        .ti-btn-primary:hover { box-shadow:0 4px 18px rgba(85,82,201,.4); }
+        .ti-btn-primary.disabled { opacity:.55; cursor:not-allowed; box-shadow:none; }
+
+        /* Ghost button */
+        .ti-btn-ghost {
+          padding:8px 14px; border-radius:9px; font-size:13px; font-weight:600;
+          border:1px solid var(--brd2,#D1D5DB); background:transparent;
+          cursor:pointer; color:var(--ink3,#4B5563); font-family:inherit;
+          transition:background .1s;
+        }
+        .ti-btn-ghost:hover { background:var(--bg3,#F1F2F5); }
+
+        /* Composer box */
+        .ti-composer {
+          border:1.5px solid var(--brd2,#D1D5DB); border-radius:12px;
+          overflow:hidden; background:var(--bg,#F7F8FA);
+          transition:border-color .15s, box-shadow .15s;
+        }
+        .ti-composer:focus-within {
+          border-color:var(--p,#5552C9);
+          box-shadow:0 0 0 3px rgba(85,82,201,.1);
+        }
+
+        /* Slide panel */
+        .ti-panel {
+          position:absolute; top:0; right:0; bottom:0;
+          width:62%; min-width:520px;
+          background:var(--bg2,#fff);
+          border-left:1px solid var(--brd2,#D1D5DB);
+          box-shadow:-16px 0 56px rgba(0,0,0,.12);
+          transform:translateX(104%);
+          transition:transform .32s cubic-bezier(.22,1,.36,1);
+          z-index:50; overflow:hidden;
+          display:flex; flex-direction:column;
+        }
         .ti-panel.open { transform:translateX(0); }
-        .ti-backdrop { position:absolute; inset:0; background:rgba(15,14,20,.18); backdrop-filter:blur(3px) saturate(.85); opacity:0; transition:opacity .26s; z-index:40; cursor:pointer; }
-        .ti-backdrop.visible { opacity:1; }
-        .ti-topbar-tab:hover { color:var(--ink,#111) !important; }
-        .ti-msg-body p { margin-bottom:.7em; }
-        .ti-msg-body p:last-child { margin-bottom:0; }
+
+        /* Backdrop */
+        .ti-bd {
+          position:absolute; inset:0;
+          background:rgba(10,10,20,.12);
+          backdrop-filter:blur(3px);
+          opacity:0; transition:opacity .28s; z-index:40; cursor:pointer;
+        }
+        .ti-bd.on { opacity:1; }
+
+        .ti-msg-body p { margin:0 0 .55em; }
+        .ti-msg-body p:last-child { margin:0; }
+        .ti-msg-body a { color:inherit; opacity:.8; text-decoration:underline; }
       `}</style>
 
-      {/* ── Topbar ── */}
+      {/* ── Top bar ──────────────────────────────────────────────────────────── */}
       <header
         style={{
-          height: 50,
+          height: 52,
+          flexShrink: 0,
+          zIndex: 60,
           display: "flex",
           alignItems: "center",
           justifyContent: "space-between",
-          padding: "0 0 0 4px",
-          background: "var(--bg2,#fff)",
-          borderBottom: "1px solid var(--brd,#e5e7eb)",
-          flexShrink: 0,
-          zIndex: 50,
+          padding: "0 20px",
+          background: C.bg2,
+          borderBottom: `1px solid ${C.brd}`,
         }}
       >
-        <div style={{ display: "flex", alignItems: "center", height: "100%" }}>
-          <div
-            style={{
-              display: "flex",
-              alignItems: "center",
-              gap: 8,
-              padding: "0 16px 0 12px",
-              borderRight: "1px solid var(--brd,#e5e7eb)",
-              height: "100%",
-            }}
-          >
-            <div
-              style={{
-                width: 26,
-                height: 26,
-                borderRadius: 7,
-                background: "var(--pg,linear-gradient(135deg,#5552C9,#7370E0))",
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "center",
-              }}
-            >
-              <svg width="13" height="13" viewBox="0 0 24 24" fill="white">
-                <path d="M20 4H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2zm0 4l-8 5-8-5V6l8 5 8-5v2z" />
-              </svg>
-            </div>
-            <div
-              style={{
-                fontSize: 14,
-                fontWeight: 800,
-                letterSpacing: "-.4px",
-                color: "var(--ink,#111)",
-              }}
-            >
-              Zotra{" "}
-              <span style={{ color: "var(--p,#5552C9)", fontWeight: 700 }}>
-                Portal
-              </span>
-            </div>
-          </div>
-
-          <nav
-            style={{
-              display: "flex",
-              alignItems: "stretch",
-              height: "100%",
-              marginLeft: 4,
-            }}
-          >
-            <button
-              className="ti-topbar-tab"
-              style={tabStyle(activeView === "org", "var(--p,#5552C9)")}
-              onClick={() => switchView("org")}
-            >
-              <span
-                style={{
-                  width: 6,
-                  height: 6,
-                  borderRadius: "50%",
-                  background: "var(--p,#5552C9)",
-                }}
-              />
-              Organisation mailbox
-            </button>
-            <button
-              className="ti-topbar-tab"
-              style={tabStyle(activeView === "cust", "var(--t,#0F6E56)")}
-              onClick={() => switchView("cust")}
-            >
-              <span
-                style={{
-                  width: 6,
-                  height: 6,
-                  borderRadius: "50%",
-                  background: "var(--t,#0F6E56)",
-                }}
-              />
-              Customer mailbox
-            </button>
-          </nav>
-        </div>
-
-        <div
-          style={{
-            display: "flex",
-            alignItems: "center",
-            gap: 10,
-            paddingRight: 16,
-          }}
-        >
-          <span
-            style={{
-              fontSize: 9.5,
-              fontWeight: 800,
-              letterSpacing: ".08em",
-              padding: "3px 9px",
-              borderRadius: 20,
-              background: "var(--amberp,#FEF3DC)",
-              color: "var(--amber,#633806)",
-              border: "1px solid #FDE68A",
-            }}
-          >
-            TEST MODE
+        {/* Left: folder title as breadcrumb */}
+        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          <span style={{ fontSize: 13, color: C.ink4 }}>Test Inbox</span>
+          <span style={{ fontSize: 13, color: C.brd2 }}>/</span>
+          <span style={{ fontSize: 13, fontWeight: 700, color: C.ink }}>
+            {navFolder.charAt(0).toUpperCase() + navFolder.slice(1)}
           </span>
-          <div
-            style={{
-              fontSize: 12,
-              color: "var(--ink4,#6b7280)",
-              display: "flex",
-              alignItems: "center",
-              gap: 5,
-            }}
-          >
-            <span style={{ color: "var(--ink3,#374151)", fontWeight: 700 }}>
-              {org?.name ?? "…"}
-            </span>
-            <span style={{ opacity: 0.4 }}>·</span>
-            <span>{activeView === "org" ? "Org view" : "Customer view"}</span>
-          </div>
-          <button
-            onClick={handleRefresh}
-            title="Refresh"
-            style={{
-              width: 30,
-              height: 30,
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              border: "1px solid var(--brd,#e5e7eb)",
-              background: "transparent",
-              color: "var(--ink4,#6b7280)",
-              borderRadius: "var(--r-s,6px)",
-              cursor: "pointer",
-            }}
-          >
-            <svg
-              width="13"
-              height="13"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="2"
-              strokeLinecap="round"
-              strokeLinejoin="round"
+          {activeView === "cust" && (
+            <span
+              style={{
+                fontSize: 11,
+                fontWeight: 600,
+                padding: "2px 8px",
+                borderRadius: 20,
+                background: C.tSoft,
+                color: C.tDark,
+                border: `1px solid #A7F3D0`,
+                marginLeft: 4,
+              }}
             >
-              <polyline points="23 4 23 10 17 10" />
-              <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10" />
-            </svg>
-          </button>
+              Customer view
+            </span>
+          )}
         </div>
+
+        {/* Right: refresh */}
+        <button
+          onClick={handleRefresh}
+          className="ti-btn-ghost"
+          style={{ padding: "6px 10px" }}
+          title="Refresh"
+        >
+          <svg
+            width="13"
+            height="13"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          >
+            <polyline points="23 4 23 10 17 10" />
+            <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10" />
+          </svg>
+        </button>
       </header>
 
-      {/* ── Body ── */}
+      {/* ── Body ─────────────────────────────────────────────────────────────── */}
       <div style={{ display: "flex", flex: 1, overflow: "hidden" }}>
-        <PortalSidebar
-          orgs={orgs}
-          activeOrgIdx={activeOrgIdx}
+        <Sidebar
+          org={org}
           activeView={activeView}
           navFolder={navFolder}
           unreadCount={unreadCount}
           calCount={calEvents.length}
-          onOrgChange={(i) => {
-            setActiveOrgIdx(i);
-            if (selectedThread) closePanel();
-            setThreads([]);
-          }}
           onViewChange={switchView}
           onFolderChange={handleFolderChange}
         />
 
         <main
           style={{
-            display: "flex",
             flex: 1,
             overflow: "hidden",
             minWidth: 0,
             position: "relative",
+            display: "flex",
+            flexDirection: "column",
+            background: C.bg,
           }}
         >
           {navFolder === "calendar" ? (
             <CalendarView events={calEvents} loading={calLoading} />
           ) : (
-            <InboxList
+            <ThreadList
               threads={threads}
               view={activeView}
               folder={navFolder}
-              orgName={org?.name ?? ""}
+              orgName={org.name}
               loading={threadsLoading}
               onSelect={openThread}
               onCompose={() => setComposeOpen(true)}
@@ -2019,7 +2080,7 @@ export default function TestInboxView() {
 
           {selectedThread && (
             <div
-              className={"ti-backdrop" + (panelVisible ? " visible" : "")}
+              className={"ti-bd" + (panelVisible ? " on" : "")}
               onClick={closePanel}
             />
           )}
@@ -2027,7 +2088,7 @@ export default function TestInboxView() {
             <div className={"ti-panel" + (panelVisible ? " open" : "")}>
               <ThreadDetail
                 thread={selectedThread}
-                orgId={org?.id ?? ""}
+                orgId={org.id}
                 onClose={closePanel}
                 onToast={showToast}
               />
@@ -2036,7 +2097,8 @@ export default function TestInboxView() {
         </main>
       </div>
 
-      {composeOpen && org && (
+      {/* Compose */}
+      {composeOpen && (
         <ComposeModal
           orgId={org.id}
           onClose={() => setComposeOpen(false)}
@@ -2044,23 +2106,25 @@ export default function TestInboxView() {
         />
       )}
 
+      {/* Toast */}
       {toast && (
         <div
           style={{
             position: "fixed",
-            bottom: 20,
+            bottom: 24,
             left: "50%",
             transform: "translateX(-50%)",
-            background: "rgba(24,23,26,.92)",
+            background: "rgba(15,14,23,.92)",
             color: "#fff",
-            padding: "10px 18px",
-            borderRadius: 30,
+            padding: "10px 22px",
+            borderRadius: 100,
             fontSize: 13,
             fontWeight: 600,
             zIndex: 9999,
             whiteSpace: "nowrap",
-            boxShadow: "0 6px 24px rgba(0,0,0,.25)",
-            backdropFilter: "blur(12px)",
+            boxShadow: "0 8px 32px rgba(0,0,0,.2)",
+            backdropFilter: "blur(16px)",
+            animation: "ti-toast .2s cubic-bezier(.16,1,.3,1)",
           }}
         >
           {toast}

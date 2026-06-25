@@ -9,6 +9,7 @@ import type { ViewType } from "../types";
 import type { UserProfile } from "../types/userProfile";
 import { getAvatarInitials } from "../types/userProfile";
 import { useAuth } from "../../context/AuthContext";
+import { logout } from "../../services/api";
 
 // ─── Org Branding Context ─────────────────────────────────────────────────────
 export interface OrgBranding {
@@ -1588,12 +1589,12 @@ const Sidebar: React.FC<SidebarProps> = ({
             <div className="sb-pm-div" />
             <button
               className="sb-pm-item danger"
-              onClick={() => {
+              onClick={async () => {
                 setMenuOpen(false);
                 setFlyoutOpen(false);
-                clearAuth();
+                await logout(); // POST /auth/logout with refreshToken — invalidates server session
+                clearAuth(); // clears all localStorage keys (tokens + session + profile)
                 sessionStorage.clear();
-                localStorage.clear();
                 window.location.href = "/login";
               }}
             >
