@@ -1,4 +1,4 @@
-import{r as c,j as e}from"./vendor-react-DTmZBiFG.js";import{I as h}from"./AppShell-D-qosF_w.js";import{A as L}from"./AccountDetailPanel-BbfH9UHV.js";import"./index-Cntfpldn.js";import"./api-C65-Ddf2.js";import"./vendor-icons-BGVXKQIZ.js";import"./Shared-BmJpXX_S.js";const _=`
+import{r as c,j as e}from"./vendor-react-DTmZBiFG.js";import{I as h}from"./AppShell-wgqEMsup.js";import{A as L}from"./AccountDetailPanel-Cf3Wj9qL.js";import"./index-lTUd1QeB.js";import"./api-DCvr0-DU.js";import"./vendor-icons-BGVXKQIZ.js";import"./Shared-BmJpXX_S.js";const _=`
 .wbv-root {
   flex: 1; display: flex; flex-direction: column;
    min-height: 0; height: 100%;

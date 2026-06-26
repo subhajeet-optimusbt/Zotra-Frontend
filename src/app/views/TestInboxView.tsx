@@ -1,8 +1,3 @@
-/**
- * TestInboxView.tsx — v3 redesign
- * Backend: .NET via apiFetch + baseUrl() + Bearer token
- */
-
 import React, { useState, useCallback, useRef, useEffect } from "react";
 import { baseUrl, apiFetch } from "../utils/utils";
 import { getToken } from "../../services/api";
@@ -66,7 +61,7 @@ async function inboxFetch<T>(
     let d = res.status.toString();
     try {
       const b = await res.json();
-      d = b?.detail ?? b?.title ?? d;
+      d = b?.detail ?? b?.title ?? b?.error ?? d;
     } catch {
       /* */
     }
@@ -262,7 +257,7 @@ function adaptMessage(m: MailMessageOut): Thread {
     preview: (m.body || "").replace(/<[^>]+>/g, "").substring(0, 110),
     tags: [],
     unread: m.processing_status === "new",
-    direction: m.direction === "outbound" ? "Sent" : "Inbound",
+    direction: m.direction === "outbound" ? "Outbound" : "Inbound",
     to: m.to_emails || "",
     messages: [],
     composerSide: "org",
@@ -389,14 +384,17 @@ const Pill: React.FC<{ status: string }> = ({ status }) => {
 const ThreadDetail: React.FC<{
   thread: Thread;
   orgId: string;
+  portalView: PortalView;
   onClose: () => void;
   onToast: (m: string) => void;
-}> = ({ thread, orgId, onClose, onToast }) => {
+}> = ({ thread, orgId, portalView, onClose, onToast }) => {
   const [msgs, setMsgs] = useState<Message[]>(thread.messages);
   const [reply, setReply] = useState("");
   const [loading, setLoading] = useState(true);
   const [sending, setSending] = useState(false);
   const bodyRef = useRef<HTMLDivElement>(null);
+
+  const isCustomerView = portalView === "cust";
 
   const scrollBottom = () =>
     setTimeout(
@@ -422,37 +420,47 @@ const ThreadDetail: React.FC<{
   }, [thread.id]);
 
   const send = async () => {
+    if (!isCustomerView) {
+      onToast("Switch to Customer view to reply");
+      return;
+    }
+
     const text = reply.trim();
     if (!text) {
       onToast("Write a message first");
       return;
     }
+
+    const fromEmail = thread.email || thread.from || "customer@unknown.com";
+    const fromName = thread.from || thread.email || "Customer";
+
+    // direction flips relative to the original thread direction
+    const direction = thread.direction === "Inbound" ? "outbound" : "inbound";
+
     setSending(true);
     try {
-      await inboxFetch("/test/mailbox/send", undefined, {
+      await inboxFetch("/test/mailbox/messages", undefined, {
         method: "POST",
         body: JSON.stringify({
-          organisation_id: orgId,
-          from_email: "rep@zotra.ai",
-          from_name: "Zotra Portal",
-          to_emails: thread.email,
-          subject: thread.subject,
+          direction,
+          fromEmail,
+          fromName,
+          toEmails: "info@zotra.com",
+          subject: thread.subject || "(no subject)",
           body: `<p>${text.replace(/\n/g, "<br>")}</p>`,
-          thread_id: thread.id,
-          sent_at: new Date().toISOString(),
-          created_at: new Date().toISOString(),
-          created_by: "tester",
+          threadId: thread.id,
+          createdBy: "tester",
         }),
       });
       setMsgs((p) => [
         ...p,
         {
           id: "m" + Date.now(),
-          side: "org",
-          initials: "ZA",
-          avatarColor: C.p,
-          from: "You",
-          label: "You",
+          side: "cust",
+          initials: thread.initials,
+          avatarColor: C.t,
+          from: thread.from,
+          label: "Customer",
           time: "Just now",
           body: `<p>${text.replace(/\n/g, "<br>")}</p>`,
         },
@@ -460,8 +468,8 @@ const ThreadDetail: React.FC<{
       setReply("");
       scrollBottom();
       onToast("Reply sent ✓");
-    } catch {
-      onToast("Failed to send");
+    } catch (err: any) {
+      onToast(err?.message ?? "Failed to send");
     } finally {
       setSending(false);
     }
@@ -691,60 +699,82 @@ const ThreadDetail: React.FC<{
         }}
       >
         <div style={{ maxWidth: 720, margin: "0 auto" }}>
-          <div className="ti-composer">
-            <textarea
-              value={reply}
-              onChange={(e) => setReply(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) send();
-              }}
-              placeholder="Write a reply… (⌘↵ to send)"
-              rows={3}
-              style={{
-                display: "block",
-                width: "100%",
-                border: "none",
-                outline: "none",
-                padding: "13px 16px 6px",
-                fontSize: 13.5,
-                resize: "none",
-                lineHeight: 1.7,
-                color: C.ink,
-                background: "transparent",
-                fontFamily: "inherit",
-                minHeight: 78,
-              }}
-            />
+          {!isCustomerView ? (
             <div
               style={{
                 display: "flex",
                 alignItems: "center",
-                justifyContent: "space-between",
-                padding: "8px 12px 10px",
+                justifyContent: "center",
+                gap: 8,
+                padding: "14px 16px",
+                borderRadius: 12,
+                background: C.amberBg,
+                border: `1px solid ${C.amberBdr}`,
               }}
             >
-              <span style={{ fontSize: 11.5, color: C.ink4 }}>
-                From{" "}
-                <span style={{ color: C.p, fontWeight: 600 }}>
-                  rep@zotra.ai
-                </span>
+              <span style={{ fontSize: 14 }}>💡</span>
+              <span style={{ fontSize: 13, color: C.amber, fontWeight: 600 }}>
+                Switch to{" "}
+                <strong style={{ fontWeight: 800 }}>Customer view</strong> to
+                reply to this thread
               </span>
-              <div style={{ display: "flex", gap: 6 }}>
-                <button onClick={() => setReply("")} className="ti-btn-ghost">
-                  Discard
-                </button>
-                <button
-                  onClick={send}
-                  disabled={sending}
-                  className={
-                    sending ? "ti-btn-primary disabled" : "ti-btn-primary"
-                  }
-                >
-                  {sending ? "Sending…" : "Send reply"}
-                </button>
+            </div>
+          ) : (
+            <div className="ti-composer">
+              <textarea
+                value={reply}
+                onChange={(e) => setReply(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) send();
+                }}
+                placeholder="Write a reply… (⌘↵ to send)"
+                rows={3}
+                style={{
+                  display: "block",
+                  width: "100%",
+                  border: "none",
+                  outline: "none",
+                  padding: "13px 16px 6px",
+                  fontSize: 13.5,
+                  resize: "none",
+                  lineHeight: 1.7,
+                  color: C.ink,
+                  background: "transparent",
+                  fontFamily: "inherit",
+                  minHeight: 78,
+                }}
+              />
+              <div
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "space-between",
+                  padding: "8px 12px 10px",
+                }}
+              >
+                <span style={{ fontSize: 11.5, color: C.ink4 }}>
+                  From{" "}
+                  <span style={{ color: C.t, fontWeight: 600 }}>
+                    {thread.email}
+                  </span>
+                </span>
+                <div style={{ display: "flex", gap: 6 }}>
+                  <button onClick={() => setReply("")} className="ti-btn-ghost">
+                    Discard
+                  </button>
+                  <button
+                    onClick={send}
+                    disabled={sending}
+                    className={
+                      sending ? "ti-btn-primary disabled" : "ti-btn-primary"
+                    }
+                  >
+                    {sending ? "Sending…" : "Send reply"}
+                  </button>
+                </div>
               </div>
             </div>
-          </div>
+          )}
         </div>
       </div>
     </div>
@@ -764,30 +794,31 @@ const ComposeModal: React.FC<{
   const [sending, setSending] = useState(false);
 
   const send = async () => {
-    if (!to.trim() || !subject.trim()) {
-      onToast("Fill in To and Subject");
+    const fromTrimmed = to.trim();
+    const subjectTrimmed = subject.trim();
+    if (!fromTrimmed || !subjectTrimmed) {
+      onToast("Fill in From and Subject");
       return;
     }
     setSending(true);
     try {
-      await inboxFetch("/test/mailbox/send", undefined, {
+      // New compose is always a customer initiating — direction is inbound
+      await inboxFetch("/test/mailbox/messages", undefined, {
         method: "POST",
         body: JSON.stringify({
-          organisation_id: orgId,
-          from_email: "rep@zotra.ai",
-          from_name: "Zotra Portal",
-          to_emails: to,
-          subject,
+          direction: "inbound",
+          fromEmail: fromTrimmed,
+          fromName: fromTrimmed,
+          toEmails: "info@zotra.com",
+          subject: subjectTrimmed,
           body: `<p>${body.replace(/\n/g, "<br>")}</p>`,
-          sent_at: new Date().toISOString(),
-          created_at: new Date().toISOString(),
-          created_by: "tester",
+          createdBy: "tester",
         }),
       });
-      onToast("Sent to " + to);
+      onToast("Sent from " + fromTrimmed);
       onClose();
-    } catch {
-      onToast("Failed to send");
+    } catch (err: any) {
+      onToast(err?.message ?? "Failed to send");
     } finally {
       setSending(false);
     }
@@ -826,7 +857,7 @@ const ComposeModal: React.FC<{
             justifyContent: "space-between",
             padding: "16px 22px",
             borderBottom: `1px solid ${C.brd}`,
-            background: `linear-gradient(to bottom, ${C.pSoft}, ${C.bg2})`,
+            background: `linear-gradient(to bottom, ${C.tSoft}, ${C.bg2})`,
           }}
         >
           <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
@@ -835,7 +866,7 @@ const ComposeModal: React.FC<{
                 width: 32,
                 height: 32,
                 borderRadius: 9,
-                background: C.pGrad,
+                background: `linear-gradient(135deg,#0F6E56 0%,#18A37E 100%)`,
                 display: "flex",
                 alignItems: "center",
                 justifyContent: "center",
@@ -849,8 +880,8 @@ const ComposeModal: React.FC<{
               <div style={{ fontSize: 14, fontWeight: 800, color: C.ink }}>
                 New message
               </div>
-              <div style={{ fontSize: 11, color: C.ink4 }}>
-                from rep@zotra.ai
+              <div style={{ fontSize: 11, color: C.tDark, fontWeight: 600 }}>
+                Simulating inbound from customer
               </div>
             </div>
           </div>
@@ -859,13 +890,41 @@ const ComposeModal: React.FC<{
           </button>
         </div>
 
-        {/* To / Subject */}
+        {/* To (fixed) */}
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: 12,
+            padding: "11px 22px",
+            borderBottom: `1px solid ${C.brd}`,
+            background: C.bg3,
+          }}
+        >
+          <label
+            style={{
+              fontSize: 11,
+              fontWeight: 700,
+              color: C.ink4,
+              minWidth: 56,
+              textTransform: "uppercase",
+              letterSpacing: ".05em",
+            }}
+          >
+            To
+          </label>
+          <span style={{ fontSize: 13, color: C.ink4, fontWeight: 500 }}>
+            info@zotra.com
+          </span>
+        </div>
+
+        {/* From / Subject */}
         {[
           {
-            lbl: "To",
+            lbl: "From",
             val: to,
             set: setTo,
-            ph: "recipient@company.com",
+            ph: "customer@company.com",
             type: "email",
           },
           {
@@ -955,6 +1014,9 @@ const ComposeModal: React.FC<{
             onClick={send}
             disabled={sending}
             className={sending ? "ti-btn-primary disabled" : "ti-btn-primary"}
+            style={{
+              background: "linear-gradient(135deg,#0F6E56 0%,#18A37E 100%)",
+            }}
           >
             {sending ? "Sending…" : "Send message"}
           </button>
@@ -1257,13 +1319,20 @@ const ThreadList: React.FC<{
               }}
             />
           </div>
-          <button
-            onClick={onCompose}
-            className="ti-btn-primary"
-            style={{ whiteSpace: "nowrap" }}
-          >
-            ✦ Compose
-          </button>
+
+          {/* Compose button only visible in customer view */}
+          {view === "cust" && (
+            <button
+              onClick={onCompose}
+              className="ti-btn-primary"
+              style={{
+                whiteSpace: "nowrap",
+                background: "linear-gradient(135deg,#0F6E56 0%,#18A37E 100%)",
+              }}
+            >
+              ✦ Compose
+            </button>
+          )}
         </div>
       </div>
 
@@ -1342,7 +1411,6 @@ const ThreadList: React.FC<{
                 background: t.unread ? accentSoft + "60" : C.bg2,
               }}
             >
-              {/* Unread accent bar */}
               {t.unread && (
                 <span
                   style={{
@@ -1365,7 +1433,6 @@ const ThreadList: React.FC<{
               />
 
               <div style={{ flex: 1, minWidth: 0 }}>
-                {/* Line 1 */}
                 <div
                   style={{
                     display: "flex",
@@ -1433,7 +1500,6 @@ const ThreadList: React.FC<{
                     {t.time}
                   </span>
                 </div>
-                {/* Line 2 */}
                 <div
                   style={{
                     fontSize: 13.5,
@@ -1447,7 +1513,6 @@ const ThreadList: React.FC<{
                 >
                   {t.subject}
                 </div>
-                {/* Line 3 */}
                 <div
                   style={{
                     fontSize: 12,
@@ -1611,7 +1676,7 @@ const Sidebar: React.FC<{
         </div>
       </div>
 
-      {/* View switcher — segmented, single source of truth */}
+      {/* View switcher */}
       <div style={{ padding: "14px 2px 4px" }}>
         <div
           style={{
@@ -1879,7 +1944,6 @@ export default function TestInboxView() {
         @keyframes ti-rise { from{opacity:0;transform:translateY(14px) scale(.98)} to{opacity:1;transform:none} }
         @keyframes ti-toast{ from{opacity:0;transform:translateX(-50%) translateY(10px)} to{opacity:1;transform:translateX(-50%)} }
 
-        /* Sidebar nav button */
         .ti-nav-btn {
           display:flex; align-items:center; gap:9px;
           width:100%; padding:8px 10px; margin-bottom:2px;
@@ -1896,11 +1960,9 @@ export default function TestInboxView() {
         .ti-nav-icon { color:var(--ink4,#9CA3AF); display:flex; align-items:center;
           flex-shrink:0; transition:color .1s; }
 
-        /* Thread rows */
         .ti-row { transition:background .07s; }
         .ti-row:hover { background:var(--bg3,#F1F2F5) !important; }
 
-        /* Back button */
         .ti-back-btn {
           display:inline-flex; align-items:center; gap:5px;
           font-size:12.5px; font-weight:600; color:var(--ink3,#4B5563);
@@ -1910,7 +1972,6 @@ export default function TestInboxView() {
         }
         .ti-back-btn:hover { background:var(--bg3,#F1F2F5); }
 
-        /* Close button */
         .ti-close-btn {
           width:30px; height:30px; display:flex; align-items:center; justify-content:center;
           border:1px solid var(--brd,#E5E7EB); background:var(--bg,#F7F8FA);
@@ -1919,7 +1980,6 @@ export default function TestInboxView() {
         }
         .ti-close-btn:hover { background:var(--bg3,#F1F2F5); }
 
-        /* Primary button */
         .ti-btn-primary {
           display:inline-flex; align-items:center; gap:5px;
           padding:8px 18px; border-radius:9px; border:none;
@@ -1931,7 +1991,6 @@ export default function TestInboxView() {
         .ti-btn-primary:hover { box-shadow:0 4px 18px rgba(85,82,201,.4); }
         .ti-btn-primary.disabled { opacity:.55; cursor:not-allowed; box-shadow:none; }
 
-        /* Ghost button */
         .ti-btn-ghost {
           padding:8px 14px; border-radius:9px; font-size:13px; font-weight:600;
           border:1px solid var(--brd2,#D1D5DB); background:transparent;
@@ -1940,18 +1999,16 @@ export default function TestInboxView() {
         }
         .ti-btn-ghost:hover { background:var(--bg3,#F1F2F5); }
 
-        /* Composer box */
         .ti-composer {
           border:1.5px solid var(--brd2,#D1D5DB); border-radius:12px;
           overflow:hidden; background:var(--bg,#F7F8FA);
           transition:border-color .15s, box-shadow .15s;
         }
         .ti-composer:focus-within {
-          border-color:var(--p,#5552C9);
-          box-shadow:0 0 0 3px rgba(85,82,201,.1);
+          border-color:var(--t,#0F6E56);
+          box-shadow:0 0 0 3px rgba(15,110,86,.1);
         }
 
-        /* Slide panel */
         .ti-panel {
           position:absolute; top:0; right:0; bottom:0;
           width:62%; min-width:520px;
@@ -1965,7 +2022,6 @@ export default function TestInboxView() {
         }
         .ti-panel.open { transform:translateX(0); }
 
-        /* Backdrop */
         .ti-bd {
           position:absolute; inset:0;
           background:rgba(10,10,20,.12);
@@ -1993,7 +2049,6 @@ export default function TestInboxView() {
           borderBottom: `1px solid ${C.brd}`,
         }}
       >
-        {/* Left: folder title as breadcrumb */}
         <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
           <span style={{ fontSize: 13, color: C.ink4 }}>Test Inbox</span>
           <span style={{ fontSize: 13, color: C.brd2 }}>/</span>
@@ -2018,7 +2073,6 @@ export default function TestInboxView() {
           )}
         </div>
 
-        {/* Right: refresh */}
         <button
           onClick={handleRefresh}
           className="ti-btn-ghost"
@@ -2089,6 +2143,7 @@ export default function TestInboxView() {
               <ThreadDetail
                 thread={selectedThread}
                 orgId={org.id}
+                portalView={activeView}
                 onClose={closePanel}
                 onToast={showToast}
               />
@@ -2097,7 +2152,7 @@ export default function TestInboxView() {
         </main>
       </div>
 
-      {/* Compose */}
+      {/* Compose — only reachable from customer view */}
       {composeOpen && (
         <ComposeModal
           orgId={org.id}
