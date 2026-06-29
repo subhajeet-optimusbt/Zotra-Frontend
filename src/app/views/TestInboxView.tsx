@@ -151,17 +151,14 @@ interface CalEventOut {
 // ── Tokens ────────────────────────────────────────────────────────────────────
 
 const C = {
-  // Brand
   p: "var(--p,#5552C9)",
   pGrad: "linear-gradient(135deg,#5552C9 0%,#7B78E8 100%)",
   pSoft: "var(--pp,#EEEEFF)",
   pDark: "var(--pd,#3C3489)",
   pGlow: "rgba(85,82,201,.22)",
-  // Teal
   t: "var(--t,#0F6E56)",
   tSoft: "var(--tp,#E4F7F1)",
   tDark: "var(--td,#085041)",
-  // Status
   amber: "#D97706",
   amberBg: "#FFFBEB",
   amberBdr: "#FDE68A",
@@ -169,7 +166,6 @@ const C = {
   redBg: "#FEF2F2",
   green: "#059669",
   greenBg: "#ECFDF5",
-  // Neutrals
   ink: "var(--ink,#0F0E17)",
   ink2: "var(--ink2,#1F2937)",
   ink3: "var(--ink3,#4B5563)",
@@ -227,7 +223,7 @@ const STATUS_MAP: Record<
 function adaptMessage(m: MailMessageOut): Thread {
   if (m.sent_at === "") m.sent_at = null;
   if ((m.created_at as string) === "") m.created_at = new Date().toISOString();
-  const name = m.from_name || m.from_email || "?";
+  const name = m.from_name || m.from_email || "Unknown";
   const ts = m.sent_at || m.created_at;
   const display = ts
     ? new Date(ts).toLocaleTimeString([], {
@@ -270,7 +266,7 @@ function adaptToMessage(m: MailMessageOut): Message {
   return {
     id: m.message_id,
     side: m.direction === "outbound" ? "org" : "cust",
-    initials: (m.from_name || m.from_email || "?")
+    initials: (m.from_name || m.from_email || "UN")
       .substring(0, 2)
       .toUpperCase(),
     avatarColor: m.direction === "outbound" ? C.p : C.t,
@@ -379,6 +375,54 @@ const Pill: React.FC<{ status: string }> = ({ status }) => {
   );
 };
 
+// ── Compose field row helper ──────────────────────────────────────────────────
+
+const FieldRow: React.FC<{
+  label: string;
+  value: string;
+  onChange: (v: string) => void;
+  placeholder: string;
+  type?: string;
+}> = ({ label, value, onChange, placeholder, type = "text" }) => (
+  <div
+    style={{
+      display: "flex",
+      alignItems: "center",
+      gap: 12,
+      padding: "11px 22px",
+      borderBottom: `1px solid ${C.brd}`,
+    }}
+  >
+    <label
+      style={{
+        fontSize: 11,
+        fontWeight: 700,
+        color: C.ink4,
+        minWidth: 56,
+        textTransform: "uppercase" as const,
+        letterSpacing: ".05em",
+      }}
+    >
+      {label}
+    </label>
+    <input
+      type={type}
+      value={value}
+      onChange={(e) => onChange(e.target.value)}
+      placeholder={placeholder}
+      style={{
+        flex: 1,
+        border: "none",
+        outline: "none",
+        fontSize: 13.5,
+        fontFamily: "inherit",
+        color: C.ink,
+        background: "transparent",
+      }}
+    />
+  </div>
+);
+
 // ── Thread detail panel ───────────────────────────────────────────────────────
 
 const ThreadDetail: React.FC<{
@@ -424,19 +468,14 @@ const ThreadDetail: React.FC<{
       onToast("Switch to Customer view to reply");
       return;
     }
-
     const text = reply.trim();
     if (!text) {
       onToast("Write a message first");
       return;
     }
-
     const fromEmail = thread.email || thread.from || "customer@unknown.com";
     const fromName = thread.from || thread.email || "Customer";
-
-    // direction flips relative to the original thread direction
     const direction = thread.direction === "Inbound" ? "outbound" : "inbound";
-
     setSending(true);
     try {
       await inboxFetch("/test/mailbox/messages", undefined, {
@@ -537,7 +576,6 @@ const ThreadDetail: React.FC<{
             </span>
           </div>
         </div>
-
         <div style={{ display: "flex", gap: 14, alignItems: "flex-start" }}>
           <Av initials={thread.initials} color={thread.avatarColor} size={44} />
           <div style={{ flex: 1, minWidth: 0 }}>
@@ -788,13 +826,14 @@ const ComposeModal: React.FC<{
   onClose: () => void;
   onToast: (m: string) => void;
 }> = ({ orgId, onClose, onToast }) => {
-  const [to, setTo] = useState("");
+  const [name, setName] = useState(""); // ← NEW
+  const [from, setFrom] = useState("");
   const [subject, setSubject] = useState("");
   const [body, setBody] = useState("");
   const [sending, setSending] = useState(false);
 
   const send = async () => {
-    const fromTrimmed = to.trim();
+    const fromTrimmed = from.trim();
     const subjectTrimmed = subject.trim();
     if (!fromTrimmed || !subjectTrimmed) {
       onToast("Fill in From and Subject");
@@ -802,20 +841,19 @@ const ComposeModal: React.FC<{
     }
     setSending(true);
     try {
-      // New compose is always a customer initiating — direction is inbound
       await inboxFetch("/test/mailbox/messages", undefined, {
         method: "POST",
         body: JSON.stringify({
           direction: "inbound",
           fromEmail: fromTrimmed,
-          fromName: fromTrimmed,
+          fromName: name.trim() || fromTrimmed, // ← use name if provided, fall back to email
           toEmails: "info@zotra.com",
           subject: subjectTrimmed,
           body: `<p>${body.replace(/\n/g, "<br>")}</p>`,
           createdBy: "tester",
         }),
       });
-      onToast("Sent from " + fromTrimmed);
+      onToast("Sent from " + (name.trim() || fromTrimmed));
       onClose();
     } catch (err: any) {
       onToast(err?.message ?? "Failed to send");
@@ -907,7 +945,7 @@ const ComposeModal: React.FC<{
               fontWeight: 700,
               color: C.ink4,
               minWidth: 56,
-              textTransform: "uppercase",
+              textTransform: "uppercase" as const,
               letterSpacing: ".05em",
             }}
           >
@@ -918,63 +956,28 @@ const ComposeModal: React.FC<{
           </span>
         </div>
 
-        {/* From / Subject */}
-        {[
-          {
-            lbl: "From",
-            val: to,
-            set: setTo,
-            ph: "customer@company.com",
-            type: "email",
-          },
-          {
-            lbl: "Subject",
-            val: subject,
-            set: setSubject,
-            ph: "Subject line…",
-            type: "text",
-          },
-        ].map(({ lbl, val, set, ph, type }) => (
-          <div
-            key={lbl}
-            style={{
-              display: "flex",
-              alignItems: "center",
-              gap: 12,
-              padding: "11px 22px",
-              borderBottom: `1px solid ${C.brd}`,
-            }}
-          >
-            <label
-              style={{
-                fontSize: 11,
-                fontWeight: 700,
-                color: C.ink4,
-                minWidth: 56,
-                textTransform: "uppercase",
-                letterSpacing: ".05em",
-              }}
-            >
-              {lbl}
-            </label>
-            <input
-              type={type}
-              value={val}
-              onChange={(e) => set(e.target.value)}
-              placeholder={ph}
-              style={{
-                flex: 1,
-                border: "none",
-                outline: "none",
-                fontSize: 13.5,
-                fontFamily: "inherit",
-                color: C.ink,
-                background: "transparent",
-              }}
-            />
-          </div>
-        ))}
+        {/* Name / From / Subject fields */}
+        <FieldRow
+          label="Name"
+          value={name}
+          onChange={setName}
+          placeholder="Customer name…"
+        />
+        <FieldRow
+          label="From"
+          value={from}
+          onChange={setFrom}
+          placeholder="customer@company.com"
+          type="email"
+        />
+        <FieldRow
+          label="Subject"
+          value={subject}
+          onChange={setSubject}
+          placeholder="Subject line…"
+        />
 
+        {/* Body */}
         <textarea
           value={body}
           onChange={(e) => setBody(e.target.value)}
@@ -988,7 +991,7 @@ const ComposeModal: React.FC<{
             fontSize: 13.5,
             fontFamily: "inherit",
             resize: "none",
-            minHeight: 180,
+            minHeight: 160,
             color: C.ink,
             lineHeight: 1.75,
             background: "transparent",
@@ -1207,7 +1210,7 @@ const ThreadList: React.FC<{
   loading: boolean;
   onSelect: (t: Thread) => void;
   onCompose: () => void;
-}> = ({ threads, view, folder, orgName, loading, onSelect, onCompose }) => {
+}> = ({ threads, view, folder, loading, onSelect, onCompose }) => {
   const [q, setQ] = useState("");
   const accent = view === "org" ? C.p : C.t;
   const accentSoft = view === "org" ? C.pSoft : C.tSoft;
@@ -1269,13 +1272,9 @@ const ThreadList: React.FC<{
               </span>
             )}
           </div>
-          <div style={{ fontSize: 11.5, color: C.ink4, marginTop: 2 }}>
-            {orgName}
-          </div>
         </div>
 
         <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-          {/* Search */}
           <div
             style={{
               display: "flex",
@@ -1319,8 +1318,6 @@ const ThreadList: React.FC<{
               }}
             />
           </div>
-
-          {/* Compose button only visible in customer view */}
           {view === "cust" && (
             <button
               onClick={onCompose}
@@ -1424,82 +1421,13 @@ const ThreadList: React.FC<{
                   }}
                 />
               )}
-
               <Av
                 initials={t.initials}
                 color={t.avatarColor}
                 size={40}
                 ring={t.unread}
               />
-
               <div style={{ flex: 1, minWidth: 0 }}>
-                <div
-                  style={{
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "space-between",
-                    marginBottom: 3,
-                  }}
-                >
-                  <div
-                    style={{
-                      display: "flex",
-                      alignItems: "center",
-                      gap: 7,
-                      minWidth: 0,
-                    }}
-                  >
-                    {t.unread && (
-                      <span
-                        style={{
-                          width: 6,
-                          height: 6,
-                          borderRadius: "50%",
-                          background: accent,
-                          flexShrink: 0,
-                        }}
-                      />
-                    )}
-                    <span
-                      style={{
-                        fontSize: 13.5,
-                        fontWeight: t.unread ? 700 : 500,
-                        color: C.ink,
-                        overflow: "hidden",
-                        textOverflow: "ellipsis",
-                        whiteSpace: "nowrap",
-                        maxWidth: 220,
-                      }}
-                    >
-                      {t.from}
-                    </span>
-                    <span
-                      style={{
-                        fontSize: 10.5,
-                        fontWeight: 600,
-                        padding: "1px 7px",
-                        borderRadius: 20,
-                        flexShrink: 0,
-                        background:
-                          t.direction === "Inbound" ? C.tSoft : C.pSoft,
-                        color: t.direction === "Inbound" ? C.tDark : C.pDark,
-                      }}
-                    >
-                      {t.direction}
-                    </span>
-                  </div>
-                  <span
-                    style={{
-                      fontSize: 11,
-                      color: C.ink4,
-                      fontFamily: "monospace",
-                      flexShrink: 0,
-                      marginLeft: 8,
-                    }}
-                  >
-                    {t.time}
-                  </span>
-                </div>
                 <div
                   style={{
                     fontSize: 13.5,
@@ -1538,7 +1466,8 @@ const Sidebar: React.FC<{
   org: Org;
   activeView: PortalView;
   navFolder: NavFolder;
-  unreadCount: number;
+  inboxCount: number;
+  sentCount: number;
   calCount: number;
   onViewChange: (v: PortalView) => void;
   onFolderChange: (f: NavFolder) => void;
@@ -1546,7 +1475,8 @@ const Sidebar: React.FC<{
   org,
   activeView,
   navFolder,
-  unreadCount,
+  inboxCount,
+  sentCount,
   calCount,
   onViewChange,
   onFolderChange,
@@ -1555,7 +1485,7 @@ const Sidebar: React.FC<{
     {
       id: "inbox",
       label: "Inbox",
-      badge: unreadCount,
+      badge: inboxCount,
       icon: (
         <svg
           width="15"
@@ -1575,7 +1505,7 @@ const Sidebar: React.FC<{
     {
       id: "sent",
       label: "Sent",
-      badge: 0,
+      badge: sentCount,
       icon: (
         <svg
           width="15"
@@ -1625,59 +1555,11 @@ const Sidebar: React.FC<{
         background: C.bg2,
         display: "flex",
         flexDirection: "column",
-        padding: "16px 12px 14px",
+        padding: "20px 12px 14px",
       }}
     >
-      {/* Org identity */}
-      <div
-        style={{
-          display: "flex",
-          alignItems: "center",
-          gap: 10,
-          padding: "10px 10px 12px",
-          marginBottom: 6,
-          borderBottom: `1px solid ${C.brd}`,
-        }}
-      >
-        <div
-          style={{
-            width: 36,
-            height: 36,
-            borderRadius: 10,
-            background: C.pGrad,
-            color: "#fff",
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            fontSize: 12,
-            fontWeight: 800,
-            flexShrink: 0,
-            letterSpacing: ".02em",
-          }}
-        >
-          {org.initials}
-        </div>
-        <div style={{ minWidth: 0 }}>
-          <div
-            style={{
-              fontSize: 13,
-              fontWeight: 700,
-              color: C.ink,
-              overflow: "hidden",
-              textOverflow: "ellipsis",
-              whiteSpace: "nowrap",
-            }}
-          >
-            {org.name}
-          </div>
-          <div style={{ fontSize: 10.5, color: C.ink4, marginTop: 1 }}>
-            Test Inbox
-          </div>
-        </div>
-      </div>
-
       {/* View switcher */}
-      <div style={{ padding: "14px 2px 4px" }}>
+      <div style={{ padding: "0 2px 4px" }}>
         <div
           style={{
             fontSize: 10,
@@ -1685,7 +1567,7 @@ const Sidebar: React.FC<{
             textTransform: "uppercase",
             letterSpacing: ".08em",
             color: C.ink4,
-            marginBottom: 6,
+            marginBottom: 8,
             paddingLeft: 6,
           }}
         >
@@ -1823,6 +1705,7 @@ export default function TestInboxView() {
   const [threadsLoading, setThreadsLoading] = useState(false);
   const [calLoading, setCalLoading] = useState(false);
   const [toast, setToast] = useState("");
+  const [folderCounts, setFolderCounts] = useState({ inbox: 0, sent: 0 });
 
   const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const closeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -1843,7 +1726,11 @@ export default function TestInboxView() {
       direction,
     })
       .then((r) => {
-        if (!cancelled) setThreads((r.messages || []).map(adaptMessage));
+        if (!cancelled) {
+          const adapted = (r.messages || []).map(adaptMessage);
+          setThreads(adapted);
+          setFolderCounts((prev) => ({ ...prev, [navFolder]: adapted.length }));
+        }
       })
       .catch(() => {})
       .finally(() => {
@@ -1853,6 +1740,24 @@ export default function TestInboxView() {
       cancelled = true;
     };
   }, [org.id, navFolder, activeView]);
+
+  useEffect(() => {
+    let cancelled = false;
+    inboxFetch<{ messages: MailMessageOut[] }>("/test/mailbox/messages", {
+      direction: "outbound",
+    })
+      .then((r) => {
+        if (!cancelled)
+          setFolderCounts((prev) => ({
+            ...prev,
+            sent: (r.messages || []).length,
+          }));
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [org.id, activeView]);
 
   useEffect(() => {
     if (navFolder !== "calendar") return;
@@ -1914,7 +1819,9 @@ export default function TestInboxView() {
           "/test/mailbox/messages",
           { direction: d },
         );
-        setThreads((r.messages || []).map(adaptMessage));
+        const adapted = (r.messages || []).map(adaptMessage);
+        setThreads(adapted);
+        setFolderCounts((prev) => ({ ...prev, [navFolder]: adapted.length }));
         setThreadsLoading(false);
       }
       showToast("Up to date ✓");
@@ -1926,6 +1833,10 @@ export default function TestInboxView() {
   };
 
   const unreadCount = threads.filter((t) => t.unread).length;
+  const inboxBadge =
+    navFolder === "inbox"
+      ? unreadCount || folderCounts.inbox
+      : folderCounts.inbox;
 
   return (
     <div
@@ -1937,105 +1848,40 @@ export default function TestInboxView() {
         fontFamily: "var(--font-sans,inherit)",
       }}
     >
-      {/* ── Global styles ─────────────────────────────────────────────────── */}
       <style>{`
         @keyframes ti-sh   { 0%,100%{opacity:1} 50%{opacity:.38} }
         @keyframes ti-pop  { from{opacity:0;transform:translateY(8px) scale(.97)} to{opacity:1;transform:none} }
         @keyframes ti-rise { from{opacity:0;transform:translateY(14px) scale(.98)} to{opacity:1;transform:none} }
         @keyframes ti-toast{ from{opacity:0;transform:translateX(-50%) translateY(10px)} to{opacity:1;transform:translateX(-50%)} }
 
-        .ti-nav-btn {
-          display:flex; align-items:center; gap:9px;
-          width:100%; padding:8px 10px; margin-bottom:2px;
-          border-radius:9px; border:none; cursor:pointer; text-align:left;
-          font-size:13.5px; font-weight:500; font-family:inherit;
-          background:transparent; color:var(--ink3,#4B5563);
-          transition:background .1s, color .1s;
-        }
+        .ti-nav-btn { display:flex;align-items:center;gap:9px;width:100%;padding:8px 10px;margin-bottom:2px;border-radius:9px;border:none;cursor:pointer;text-align:left;font-size:13.5px;font-weight:500;font-family:inherit;background:transparent;color:var(--ink3,#4B5563);transition:background .1s,color .1s; }
         .ti-nav-btn:hover { background:var(--bg3,#F1F2F5); }
-        .ti-nav-btn.active {
-          background:var(--pp,#EEEEFF); color:var(--p,#5552C9); font-weight:700;
-        }
+        .ti-nav-btn.active { background:var(--pp,#EEEEFF);color:var(--p,#5552C9);font-weight:700; }
         .ti-nav-btn.active .ti-nav-icon { color:var(--p,#5552C9); }
-        .ti-nav-icon { color:var(--ink4,#9CA3AF); display:flex; align-items:center;
-          flex-shrink:0; transition:color .1s; }
-
+        .ti-nav-icon { color:var(--ink4,#9CA3AF);display:flex;align-items:center;flex-shrink:0;transition:color .1s; }
         .ti-row { transition:background .07s; }
         .ti-row:hover { background:var(--bg3,#F1F2F5) !important; }
-
-        .ti-back-btn {
-          display:inline-flex; align-items:center; gap:5px;
-          font-size:12.5px; font-weight:600; color:var(--ink3,#4B5563);
-          border:1px solid var(--brd,#E5E7EB); background:var(--bg,#F7F8FA);
-          cursor:pointer; padding:5px 11px 5px 8px; border-radius:7px;
-          font-family:inherit; transition:background .1s;
-        }
+        .ti-back-btn { display:inline-flex;align-items:center;gap:5px;font-size:12.5px;font-weight:600;color:var(--ink3,#4B5563);border:1px solid var(--brd,#E5E7EB);background:var(--bg,#F7F8FA);cursor:pointer;padding:5px 11px 5px 8px;border-radius:7px;font-family:inherit;transition:background .1s; }
         .ti-back-btn:hover { background:var(--bg3,#F1F2F5); }
-
-        .ti-close-btn {
-          width:30px; height:30px; display:flex; align-items:center; justify-content:center;
-          border:1px solid var(--brd,#E5E7EB); background:var(--bg,#F7F8FA);
-          cursor:pointer; border-radius:8px; color:var(--ink3,#4B5563);
-          font-size:13px; transition:background .1s;
-        }
+        .ti-close-btn { width:30px;height:30px;display:flex;align-items:center;justify-content:center;border:1px solid var(--brd,#E5E7EB);background:var(--bg,#F7F8FA);cursor:pointer;border-radius:8px;color:var(--ink3,#4B5563);font-size:13px;transition:background .1s; }
         .ti-close-btn:hover { background:var(--bg3,#F1F2F5); }
-
-        .ti-btn-primary {
-          display:inline-flex; align-items:center; gap:5px;
-          padding:8px 18px; border-radius:9px; border:none;
-          font-size:13px; font-weight:700; font-family:inherit; cursor:pointer;
-          background:linear-gradient(135deg,#5552C9 0%,#7B78E8 100%);
-          color:#fff; box-shadow:0 2px 10px rgba(85,82,201,.3);
-          transition:opacity .12s, box-shadow .12s;
-        }
+        .ti-btn-primary { display:inline-flex;align-items:center;gap:5px;padding:8px 18px;border-radius:9px;border:none;font-size:13px;font-weight:700;font-family:inherit;cursor:pointer;background:linear-gradient(135deg,#5552C9 0%,#7B78E8 100%);color:#fff;box-shadow:0 2px 10px rgba(85,82,201,.3);transition:opacity .12s,box-shadow .12s; }
         .ti-btn-primary:hover { box-shadow:0 4px 18px rgba(85,82,201,.4); }
-        .ti-btn-primary.disabled { opacity:.55; cursor:not-allowed; box-shadow:none; }
-
-        .ti-btn-ghost {
-          padding:8px 14px; border-radius:9px; font-size:13px; font-weight:600;
-          border:1px solid var(--brd2,#D1D5DB); background:transparent;
-          cursor:pointer; color:var(--ink3,#4B5563); font-family:inherit;
-          transition:background .1s;
-        }
+        .ti-btn-primary.disabled { opacity:.55;cursor:not-allowed;box-shadow:none; }
+        .ti-btn-ghost { padding:8px 14px;border-radius:9px;font-size:13px;font-weight:600;border:1px solid var(--brd2,#D1D5DB);background:transparent;cursor:pointer;color:var(--ink3,#4B5563);font-family:inherit;transition:background .1s; }
         .ti-btn-ghost:hover { background:var(--bg3,#F1F2F5); }
-
-        .ti-composer {
-          border:1.5px solid var(--brd2,#D1D5DB); border-radius:12px;
-          overflow:hidden; background:var(--bg,#F7F8FA);
-          transition:border-color .15s, box-shadow .15s;
-        }
-        .ti-composer:focus-within {
-          border-color:var(--t,#0F6E56);
-          box-shadow:0 0 0 3px rgba(15,110,86,.1);
-        }
-
-        .ti-panel {
-          position:absolute; top:0; right:0; bottom:0;
-          width:62%; min-width:520px;
-          background:var(--bg2,#fff);
-          border-left:1px solid var(--brd2,#D1D5DB);
-          box-shadow:-16px 0 56px rgba(0,0,0,.12);
-          transform:translateX(104%);
-          transition:transform .32s cubic-bezier(.22,1,.36,1);
-          z-index:50; overflow:hidden;
-          display:flex; flex-direction:column;
-        }
+        .ti-composer { border:1.5px solid var(--brd2,#D1D5DB);border-radius:12px;overflow:hidden;background:var(--bg,#F7F8FA);transition:border-color .15s,box-shadow .15s; }
+        .ti-composer:focus-within { border-color:var(--t,#0F6E56);box-shadow:0 0 0 3px rgba(15,110,86,.1); }
+        .ti-panel { position:absolute;top:0;right:0;bottom:0;width:62%;min-width:520px;background:var(--bg2,#fff);border-left:1px solid var(--brd2,#D1D5DB);box-shadow:-16px 0 56px rgba(0,0,0,.12);transform:translateX(104%);transition:transform .32s cubic-bezier(.22,1,.36,1);z-index:50;overflow:hidden;display:flex;flex-direction:column; }
         .ti-panel.open { transform:translateX(0); }
-
-        .ti-bd {
-          position:absolute; inset:0;
-          background:rgba(10,10,20,.12);
-          backdrop-filter:blur(3px);
-          opacity:0; transition:opacity .28s; z-index:40; cursor:pointer;
-        }
+        .ti-bd { position:absolute;inset:0;background:rgba(10,10,20,.12);backdrop-filter:blur(3px);opacity:0;transition:opacity .28s;z-index:40;cursor:pointer; }
         .ti-bd.on { opacity:1; }
-
         .ti-msg-body p { margin:0 0 .55em; }
         .ti-msg-body p:last-child { margin:0; }
-        .ti-msg-body a { color:inherit; opacity:.8; text-decoration:underline; }
+        .ti-msg-body a { color:inherit;opacity:.8;text-decoration:underline; }
       `}</style>
 
-      {/* ── Top bar ──────────────────────────────────────────────────────────── */}
+      {/* Top bar */}
       <header
         style={{
           height: 52,
@@ -2072,7 +1918,6 @@ export default function TestInboxView() {
             </span>
           )}
         </div>
-
         <button
           onClick={handleRefresh}
           className="ti-btn-ghost"
@@ -2095,18 +1940,18 @@ export default function TestInboxView() {
         </button>
       </header>
 
-      {/* ── Body ─────────────────────────────────────────────────────────────── */}
+      {/* Body */}
       <div style={{ display: "flex", flex: 1, overflow: "hidden" }}>
         <Sidebar
           org={org}
           activeView={activeView}
           navFolder={navFolder}
-          unreadCount={unreadCount}
+          inboxCount={inboxBadge}
+          sentCount={folderCounts.sent}
           calCount={calEvents.length}
           onViewChange={switchView}
           onFolderChange={handleFolderChange}
         />
-
         <main
           style={{
             flex: 1,
@@ -2131,7 +1976,6 @@ export default function TestInboxView() {
               onCompose={() => setComposeOpen(true)}
             />
           )}
-
           {selectedThread && (
             <div
               className={"ti-bd" + (panelVisible ? " on" : "")}
@@ -2152,7 +1996,6 @@ export default function TestInboxView() {
         </main>
       </div>
 
-      {/* Compose — only reachable from customer view */}
       {composeOpen && (
         <ComposeModal
           orgId={org.id}
@@ -2161,7 +2004,6 @@ export default function TestInboxView() {
         />
       )}
 
-      {/* Toast */}
       {toast && (
         <div
           style={{

@@ -1,4 +1,4 @@
-import{r as o,j as e,d as Se}from"./vendor-react-DTmZBiFG.js";import{I as r}from"./AppShell-wgqEMsup.js";import{g as te,a as se,b as re}from"./api-DCvr0-DU.js";import"./index-lTUd1QeB.js";import"./vendor-icons-BGVXKQIZ.js";function ae(a){const l=a.trim().split(/[,\-\u2013\u2014.]/)[0].trim();return l.charAt(0).toUpperCase()+l.slice(1)||"New Customer"}const qe=`
+import{r as o,j as e,d as Se}from"./vendor-react-DTmZBiFG.js";import{I as r}from"./AppShell-DczK4XpG.js";import{g as te,a as se,b as re}from"./api-BR5LSxT6.js";import"./index-C07rrmDM.js";import"./vendor-icons-BGVXKQIZ.js";function ae(a){const l=a.trim().split(/[,\-\u2013\u2014.]/)[0].trim();return l.charAt(0).toUpperCase()+l.slice(1)||"New Customer"}const qe=`
 @keyframes qs-blink  { 0%,100%{opacity:1}  50%{opacity:.3} }
 @keyframes qs-fadein { from{opacity:0;transform:translateY(6px)} to{opacity:1;transform:translateY(0)} }
 @keyframes qs-spin   { to{transform:rotate(360deg)} }

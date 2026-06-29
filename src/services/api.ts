@@ -174,46 +174,86 @@ interface RefreshResponse {
   refreshToken: string;
 }
 
+// ── In-flight lock ─────────────────────────────────────────────────────────
+// Prevents two concurrent calls to /auth/refresh racing each other.
+// If the background timer and an on-demand apiFetch retry both fire at the
+// same millisecond, only the first one hits the network. The second awaits
+// the same promise and gets the result for free.
+let refreshPromise: Promise<void> | null = null;
+
 /**
  * Calls POST /auth/refresh with the current Bearer token + refreshToken body.
  * On success, persists the new token pair via setTokens().
- * On failure (network error, 401, etc.) it silently fails — the next real API
- * call will hit a 401 and redirect to /login via the normal request() handler.
+ * On failure (network error, 401, etc.) it silently fails — the next real
+ * API call will hit a 401 and redirect to /login via the normal flow.
+ *
+ * Thread-safe: concurrent callers share one in-flight promise so the server
+ * only ever receives one refresh request at a time.
  */
 export async function refreshTokens(): Promise<void> {
-  const token = getToken();
-  const refreshToken = getRefreshToken();
+  // If a refresh is already in progress, return the same promise so all
+  // concurrent callers wait for the same single network request.
+  if (refreshPromise) return refreshPromise;
 
-  if (!token || !refreshToken) return;
+  refreshPromise = (async () => {
+    const token = getToken();
+    const refreshToken = getRefreshToken();
+
+    if (!token || !refreshToken) return;
+
+    try {
+      const res = await fetch(`${baseUrl().replace(/\/+$/, "")}/auth/refresh`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ refreshToken }),
+      });
+
+      if (!res.ok) return; // let the session expire naturally on the next real call
+
+      const data: RefreshResponse = await res.json();
+
+      if (data.success && data.token && data.refreshToken) {
+        setTokens(data.token, data.refreshToken);
+      }
+    } catch {
+      // network error — do nothing, session will expire on next real call
+    }
+  })();
 
   try {
-    const res = await fetch(`${baseUrl().replace(/\/+$/, "")}/auth/refresh`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${token}`,
-      },
-      body: JSON.stringify({ refreshToken }),
-    });
-
-    if (!res.ok) return; // let the session expire naturally
-
-    const data: RefreshResponse = await res.json();
-
-    if (data.success && data.token && data.refreshToken) {
-      setTokens(data.token, data.refreshToken);
-    }
-  } catch {
-    // network error — do nothing, session will expire on next real call
+    await refreshPromise;
+  } finally {
+    // Always clear the lock when done, success or failure
+    refreshPromise = null;
   }
 }
+
+// ── Timer guard ────────────────────────────────────────────────────────────
+// Prevents double-registration when AppShell mounts more than once
+// (React StrictMode double-invoke, Suspense remounts, hot reload, etc.).
+// Without this guard, two intervals fire simultaneously every 30 minutes —
+// the first refresh succeeds (200), the second sends the already-rotated
+// token and gets 401, which previously triggered a logout redirect.
+let refreshTimerRunning = false;
 
 /**
  * Starts a background interval that silently refreshes the token every
  * 30 minutes. Returns a cleanup function that clears the interval —
- * call it when the user logs out or the component unmounts.
+ * call it when the user logs out or the AppShell unmounts.
+ *
+ * Safe to call multiple times — only one interval is ever active at once.
  */
 export function startTokenRefreshTimer(): () => void {
+  if (refreshTimerRunning) {
+    // Already running — return a no-op cleanup so the caller's useEffect
+    // return value is still a valid function.
+    return () => {};
+  }
+
+  refreshTimerRunning = true;
   const THIRTY_MINUTES = 30 * 60 * 1000;
   // const THIRTY_MINUTES = 30 * 1000;
 
@@ -221,7 +261,10 @@ export function startTokenRefreshTimer(): () => void {
     void refreshTokens();
   }, THIRTY_MINUTES);
 
-  return () => clearInterval(intervalId);
+  return () => {
+    clearInterval(intervalId);
+    refreshTimerRunning = false;
+  };
 }
 
 // ── URL helper ─────────────────────────────────────────────────────────────
@@ -249,7 +292,6 @@ async function request<T>(
   if (!skipAuth) {
     const token = getToken();
     if (token) {
-      // ✅ Token from localStorage attached to every authenticated request
       headers.set("Authorization", `Bearer ${token}`);
     }
   }
@@ -278,65 +320,46 @@ async function request<T>(
 
   if (!res.ok) {
     if (res.status === 401 && !options?.skipAuth) {
-      // ── Silent refresh-then-retry ──────────────────────────────────────
-      // Before giving up, attempt one token refresh. This covers the window
-      // between the 30-min background timer ticks, e.g. a request that fires
-      // right as the old token expires.
-      const refreshToken = getRefreshToken();
-      const oldToken = getToken();
+      // ── Silent refresh-then-retry ────────────────────────────────────────
+      // Before giving up, attempt one token refresh via the shared lock so
+      // this never races with the background timer or another concurrent call.
+      const storedRefreshToken = getRefreshToken();
 
-      if (refreshToken && oldToken) {
+      if (storedRefreshToken) {
         try {
-          const refreshRes = await fetch(`${buildUrl("auth/refresh")}`, {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-              Authorization: `Bearer ${oldToken}`,
-            },
-            body: JSON.stringify({ refreshToken }),
-          });
+          // refreshTokens() is lock-protected — if the timer just fired and
+          // is already refreshing, this awaits that same promise instead of
+          // sending a second request.
+          await refreshTokens();
 
-          if (refreshRes.ok) {
-            const refreshData = (await refreshRes.json()) as {
-              success: boolean;
-              token: string;
-              refreshToken: string;
-            };
+          const newToken = getToken();
+          if (newToken) {
+            // Retry the original request with the freshly issued token
+            const retryHeaders = new Headers(headers);
+            retryHeaders.set("Authorization", `Bearer ${newToken}`);
+            const retryRes = await fetch(buildUrl(path), {
+              ...restOptions,
+              headers: retryHeaders,
+            });
 
-            if (
-              refreshData.success &&
-              refreshData.token &&
-              refreshData.refreshToken
-            ) {
-              setTokens(refreshData.token, refreshData.refreshToken);
-
-              // Rebuild headers with the new token and retry once
-              const retryHeaders = new Headers(headers);
-              retryHeaders.set("Authorization", `Bearer ${refreshData.token}`);
-              const retryRes = await fetch(buildUrl(path), {
-                ...restOptions,
-                headers: retryHeaders,
-              });
-
-              if (retryRes.ok) {
-                try {
-                  return (await retryRes.json()) as T;
-                } catch {
-                  return null as unknown as T;
-                }
+            if (retryRes.ok) {
+              try {
+                return (await retryRes.json()) as T;
+              } catch {
+                return null as unknown as T;
               }
+            }
 
-              // Retry also 401 → fall through to full logout below
-              if (retryRes.status !== 401) {
-                const retryData = await retryRes.json().catch(() => null);
-                const retryMsg =
-                  (retryData &&
-                  typeof retryData === "object" &&
-                  "message" in retryData
-                    ? (retryData as { message: string }).message
-                    : null) ?? `Request failed with status ${retryRes.status}`;
-                throw new ApiError(retryMsg, retryRes.status, retryData);
-              }
+            // Non-401 error on retry — throw it as a normal ApiError
+            if (retryRes.status !== 401) {
+              const retryData = await retryRes.json().catch(() => null);
+              const retryMsg =
+                (retryData &&
+                typeof retryData === "object" &&
+                "message" in retryData
+                  ? (retryData as { message: string }).message
+                  : null) ?? `Request failed with status ${retryRes.status}`;
+              throw new ApiError(retryMsg, retryRes.status, retryData);
             }
           }
         } catch (e) {
@@ -402,13 +425,13 @@ export async function login(payload: LoginPayload): Promise<LoginResponse> {
     skipAuth: true,
   });
 }
+
 export function googleLogin(
   onSuccess: (data: LoginResponse) => void,
   onError: (msg: string) => void,
 ): void {
-  // Tell the backend which frontend origin to redirect back to
-  // This makes it work on both localhost:5173 AND production
-  const frontendCallback = `${window.location.origin}/auth/callback`;
+  // Tell the backend which frontend origin to redirect back to.
+  // This makes it work on both localhost:5173 AND production.
   const POPUP_URL = buildUrl(
     `auth/google/login?frontendUrl=${encodeURIComponent(window.location.origin)}`,
   );
@@ -427,7 +450,6 @@ export function googleLogin(
   let settled = false;
 
   const handleMessage = (event: MessageEvent) => {
-    // Accept messages from both localhost and production
     const allowedOrigins = [
       window.location.origin,
       "https://zotra-app.azurewebsites.net",
@@ -494,6 +516,8 @@ export async function logout(): Promise<void> {
     // Network failure — still clear local state
   } finally {
     clearTokens();
+    refreshTimerRunning = false; // reset the guard so a fresh login can restart the timer
+    refreshPromise = null; // discard any in-flight refresh
   }
 }
 

@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback, useRef } from "react";
 import Icon from "./Icon";
-import { baseUrl } from "../utils/utils";
+import { baseUrl,apiFetch } from "../utils/utils";
 import { useAuth } from "../../context/AuthContext";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -1584,14 +1584,9 @@ const IntakeDetailPanel: React.FC<{
       setDetail(null);
       setTab("content");
       try {
-        const res = await fetch(`${baseUrl()}/intakes/${selId}`, {
+        const res = await apiFetch(`${baseUrl()}/intakes/${selId}`, {
           headers: authHeaders(),
         });
-        if (res.status === 401) {
-          localStorage.removeItem("zotra_token");
-          window.location.href = "/login";
-          return;
-        }
         if (!res.ok)
           throw new Error(`Failed to load intake detail (${res.status})`);
         const raw: IntakeItem = await res.json();
@@ -1612,7 +1607,7 @@ const IntakeDetailPanel: React.FC<{
   const handleIgnore = async () => {
     if (!detail) return;
     try {
-      await fetch(`${baseUrl()}/intakes/${selId}`, {
+      await apiFetch(`${baseUrl()}/intakes/${selId}`, {
         method: "PATCH",
         headers: authHeaders(),
         body: JSON.stringify({
@@ -1631,7 +1626,7 @@ const IntakeDetailPanel: React.FC<{
   const handleConvert = async () => {
     if (!detail) return;
     try {
-      await fetch(`${baseUrl()}/opportunities`, {
+      await apiFetch(`${baseUrl()}/opportunities`, {
         method: "POST",
         headers: authHeaders(),
         body: JSON.stringify({

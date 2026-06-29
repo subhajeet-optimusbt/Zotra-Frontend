@@ -231,31 +231,29 @@ export default function AppShell() {
     return () => stopRefresh();
   }, []);
 
+  // ── Auth guard ───────────────────────────────────────────────────────────
+  // Only redirect to /login if BOTH the access token AND the refresh token
+  // are missing. If either exists the session can still be recovered — the
+  // background timer or the next apiFetch call will silently renew the token.
+  // Previously this also checked zotra_userId, which caused spurious logouts
+  // after a successful token refresh when the userId wasn't in localStorage.
   useEffect(() => {
     const token = localStorage.getItem("zotra_token");
-    const userId =
-      localStorage.getItem("zotra_userId") ||
-      (() => {
-        try {
-          const s = localStorage.getItem("zotra_saved_session");
-          return s ? JSON.parse(s).userId : null;
-        } catch {
-          return null;
-        }
-      })();
-    if (!token || !userId) {
-      localStorage.removeItem("zotra_token");
-      localStorage.removeItem("zotra_refresh_token");
+    const refreshToken = localStorage.getItem("zotra_refresh_token");
+    if (!token && !refreshToken) {
       window.location.href = "/login";
     }
   }, []);
 
+  // ── Sidebar badge counts ─────────────────────────────────────────────────
+  // Fetches counts for accounts, deals (opportunities), and inbox (intakes)
+  // to display as number badges in the sidebar navigation.
+  // Uses apiFetch so a stale token is silently refreshed before counts load,
+  // preventing a redirect-to-login on the very first page paint.
   useEffect(() => {
     const token = localStorage.getItem("zotra_token");
     if (!token) return;
     const base = baseUrl();
-    // Use apiFetch so a stale token is silently refreshed before counts load,
-    // preventing a redirect-to-login on the very first page paint.
     Promise.allSettled([
       apiFetch(`${base}/accounts`).then((r) => (r.ok ? r.json() : [])),
       apiFetch(`${base}/opportunities`).then((r) => (r.ok ? r.json() : [])),

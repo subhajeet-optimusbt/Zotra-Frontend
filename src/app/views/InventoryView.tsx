@@ -69,6 +69,88 @@ async function callApi(
   return res.json();
 }
 
+// ── Injected styles ───────────────────────────────────────────────────────────
+const STYLES = `
+.iv{flex:1;display:flex;flex-direction:column;overflow:hidden;height:100%;background:var(--bg);font-family:"Outfit",system-ui,sans-serif}
+.iv-hd{padding:16px 24px 13px;border-bottom:0.5px solid var(--brd);background:var(--bg2);flex-shrink:0;display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap}
+.iv-hd-left{}
+.iv-eyebrow{font-size:9.5px;font-weight:700;letter-spacing:.11em;text-transform:uppercase;color:var(--p);margin-bottom:3px}
+.iv-hd-title{font-size:16px;font-weight:650;letter-spacing:-.02em;color:var(--ink);line-height:1.2}
+.iv-hd-sub{font-size:11.5px;color:var(--ink4);margin-top:2px}
+.iv-hd-right{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.iv-body{flex:1;overflow-y:auto;padding:20px 24px 60px;background:var(--bg);scrollbar-width:thin;scrollbar-color:var(--brd2) transparent}
+.iv-body::-webkit-scrollbar{width:4px}.iv-body::-webkit-scrollbar-thumb{background:var(--brd2);border-radius:4px}
+
+.iv-status-card{background:var(--bg2);border:0.5px solid var(--brd);border-radius:var(--r-l);padding:14px 18px;display:flex;align-items:center;gap:12px;margin-bottom:18px;box-shadow:var(--sh-s)}
+.iv-status-icon{width:38px;height:38px;border-radius:10px;background:var(--pp);color:var(--p);display:flex;align-items:center;justify-content:center;font-size:17px;flex-shrink:0}
+.iv-status-name{font-size:13.5px;font-weight:650;color:var(--ink);letter-spacing:-.01em}
+.iv-status-sub{font-size:11px;color:var(--ink4);margin-top:1px}
+.iv-status-note{font-size:11.5px;color:var(--ink4);flex:1;line-height:1.5}
+
+.iv-pill{display:inline-flex;align-items:center;padding:2px 10px;border-radius:20px;font-size:10.5px;font-weight:650;letter-spacing:.01em}
+.iv-pill-ok{background:var(--okb);color:var(--ok)}
+.iv-pill-wa{background:var(--wab);color:var(--wa)}
+.iv-pill-p{background:var(--pp);color:var(--p)}
+.iv-pill-muted{background:var(--bg3);color:var(--ink4)}
+
+.iv-btn-row{display:flex;gap:8px;margin-bottom:18px;flex-wrap:wrap}
+.iv-btn-primary{padding:7px 16px;background:var(--p);color:#fff;border:none;border-radius:var(--r-m);cursor:pointer;font-size:12.5px;font-weight:600;font-family:inherit;transition:opacity .12s;letter-spacing:-.01em}
+.iv-btn-primary:hover{opacity:.88}
+.iv-btn-secondary{padding:7px 16px;background:var(--bg2);color:var(--ink3);border:0.5px solid var(--brd2);border-radius:var(--r-m);cursor:pointer;font-size:12.5px;font-weight:500;font-family:inherit;transition:background .12s}
+.iv-btn-secondary:hover{background:var(--pu);color:var(--ink)}
+.iv-btn-secondary:disabled{opacity:.5;cursor:default}
+.iv-btn-ghost{padding:5px 12px;background:var(--pp);color:var(--p);border:none;border-radius:var(--r-s);cursor:pointer;font-size:11.5px;font-weight:600;font-family:inherit;transition:opacity .12s}
+.iv-btn-ghost:hover{opacity:.8}
+
+.iv-embed-bar{display:flex;align-items:center;gap:10px;background:var(--bg2);border:0.5px solid var(--brd);border-radius:var(--r-m);padding:9px 14px;margin-bottom:18px;flex-wrap:wrap}
+.iv-embed-label{font-size:11px;font-weight:700;color:var(--ink4);white-space:nowrap;letter-spacing:.04em;text-transform:uppercase}
+.iv-embed-code{font-family:"IBM Plex Mono",monospace;font-size:11.5px;color:var(--ink3);flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+
+.iv-card{background:var(--bg2);border:0.5px solid var(--brd);border-radius:var(--r-l);overflow:hidden;margin-bottom:16px;box-shadow:var(--sh-s)}
+.iv-card-hdr{padding:12px 18px;border-bottom:0.5px solid var(--brd);display:flex;align-items:center;gap:10px;background:var(--bg2)}
+.iv-card-icon{width:26px;height:26px;border-radius:8px;background:var(--pp);color:var(--p);display:flex;align-items:center;justify-content:center;font-size:12px;flex-shrink:0}
+.iv-card-title{font-size:12.5px;font-weight:650;color:var(--ink);letter-spacing:-.01em}
+.iv-card-sub{font-size:11px;color:var(--ink4);margin-top:1px}
+
+.iv-table{width:100%;border-collapse:collapse}
+.iv-th{padding:8px 18px;font-size:9.5px;font-weight:700;color:var(--ink5);text-align:left;border-bottom:0.5px solid var(--brd);letter-spacing:.08em;text-transform:uppercase;background:var(--bg)}
+.iv-td{padding:13px 18px;border-bottom:0.5px solid var(--brd)}
+.iv-td-name{font-size:12.5px;font-weight:600;color:var(--ink);margin-bottom:2px;letter-spacing:-.01em}
+.iv-td-desc{font-size:11.5px;color:var(--ink4);line-height:1.4}
+.iv-td-detail{font-size:11.5px;color:var(--ink4);font-family:"IBM Plex Mono",monospace}
+.iv-action-btn{padding:4px 12px;background:var(--bg2);border:0.5px solid var(--brd2);border-radius:var(--r-s);cursor:pointer;font-size:11.5px;color:var(--ink3);font-weight:500;font-family:inherit;transition:background .1s,color .1s}
+.iv-action-btn:hover{background:var(--pp);color:var(--p);border-color:transparent}
+
+.iv-overlay{position:fixed;inset:0;background:rgba(0,0,0,.45);display:flex;align-items:center;justify-content:center;z-index:1000;backdrop-filter:blur(2px)}
+.iv-modal{background:var(--bg2);border:0.5px solid var(--brd);border-radius:var(--r-xl);padding:24px 28px;width:560px;max-height:88vh;overflow-y:auto;box-shadow:var(--sh-l)}
+.iv-modal-hd{display:flex;justify-content:space-between;align-items:center;margin-bottom:20px}
+.iv-modal-title{font-size:15px;font-weight:700;color:var(--ink);letter-spacing:-.02em}
+.iv-modal-close{background:none;border:none;font-size:18px;cursor:pointer;color:var(--ink4);line-height:1;padding:2px 6px;border-radius:6px;transition:background .1s}
+.iv-modal-close:hover{background:var(--bg3);color:var(--ink)}
+.iv-modal-ft{display:flex;justify-content:flex-end;gap:8px;margin-top:20px;padding-top:16px;border-top:0.5px solid var(--brd)}
+
+.iv-readonly-row{display:flex;align-items:center;gap:10px;background:var(--bg);border:0.5px solid var(--brd);border-radius:var(--r-m);padding:9px 14px;margin-bottom:16px}
+.iv-readonly-label{font-size:10.5px;font-weight:700;color:var(--ink5);width:66px;text-transform:uppercase;letter-spacing:.04em}
+.iv-readonly-val{font-size:13px;font-weight:650;color:var(--ink);flex:1;letter-spacing:-.01em}
+.iv-readonly-hint{font-size:10.5px;color:var(--ink5)}
+
+.iv-grid2{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+.iv-field-lbl{display:block;font-size:11px;font-weight:600;color:var(--ink3);margin-bottom:5px;letter-spacing:.02em;text-transform:uppercase}
+.iv-input{width:100%;padding:8px 11px;background:var(--bg);border:0.5px solid var(--brd2);border-radius:var(--r-m);font-size:13px;color:var(--ink);font-family:inherit;box-sizing:border-box;outline:none;transition:border-color .15s}
+.iv-input:focus{border-color:var(--p);box-shadow:0 0 0 2px var(--pp)}
+.iv-hint{font-size:11px;color:var(--ink5);margin-top:4px;margin-bottom:0;line-height:1.5}
+.iv-color-picker{width:42px;height:34px;border:0.5px solid var(--brd2);border-radius:var(--r-s);cursor:pointer;padding:2px;background:var(--bg)}
+
+.iv-toast{position:fixed;top:18px;right:18px;padding:10px 18px;border-radius:var(--r-m);border:0.5px solid;font-size:12.5px;font-weight:600;z-index:2000;box-shadow:var(--sh-m);font-family:inherit}
+.iv-toast-ok{background:var(--okb);color:var(--ok);border-color:var(--ok)}
+.iv-toast-err{background:var(--rib);color:var(--ri);border-color:var(--ri)}
+.iv-toast-info{background:var(--pp);color:var(--p);border-color:var(--p)}
+
+.iv-loading{flex:1;display:flex;align-items:center;justify-content:center;gap:10px;color:var(--ink4);font-size:13px}
+.iv-loading-spin{width:20px;height:20px;border:2px solid var(--brd2);border-top-color:var(--p);border-radius:50%;animation:iv-spin .7s linear infinite}
+@keyframes iv-spin{to{transform:rotate(360deg)}}
+`;
+
 // ─────────────────────────────────────────────────────────────────────────────
 export default function InventoryConfig() {
   const [config, setConfig] = useState<Config | null>(null);
@@ -101,7 +183,6 @@ export default function InventoryConfig() {
   async function loadAll(): Promise<void> {
     setLoading(true);
     try {
-      // Load org name — adjust endpoint to match your existing org endpoint
       const orgRes = await callApi("GET", "/api/organization");
       if (orgRes?.orgName) setOrgName(orgRes.orgName as string);
 
@@ -136,7 +217,6 @@ export default function InventoryConfig() {
     setTimeout(() => setToast(null), 3500);
   }
 
-  // ── Save persona & prompt ─────────────────────────────────────────────────
   async function savePersona(): Promise<void> {
     setSaving(true);
     try {
@@ -156,19 +236,18 @@ export default function InventoryConfig() {
       });
 
       if (res?.success) {
-        showMsg("✅ Config saved successfully!");
+        showMsg("Config saved successfully");
         setShowPersona(false);
         loadAll();
       } else {
-        showMsg("❌ Save failed. Try again.", "error");
+        showMsg("Save failed. Try again.", "error");
       }
     } catch {
-      showMsg("❌ Error saving config", "error");
+      showMsg("Error saving config", "error");
     }
     setSaving(false);
   }
 
-  // ── Import CSV ────────────────────────────────────────────────────────────
   async function handleCsv(
     e: React.ChangeEvent<HTMLInputElement>,
   ): Promise<void> {
@@ -176,7 +255,7 @@ export default function InventoryConfig() {
     if (!file) return;
     e.target.value = "";
     setImporting(true);
-    showMsg("⏳ Uploading and processing with AI...", "info");
+    showMsg("Uploading and processing with AI…", "info");
     try {
       const fd = new FormData();
       fd.append("file", file);
@@ -187,18 +266,17 @@ export default function InventoryConfig() {
         true,
       );
       if (res?.success) {
-        showMsg(`✅ Saved ${res.items_saved} items from CSV!`);
+        showMsg(`Saved ${res.items_saved} items from CSV`);
         loadAll();
       } else {
-        showMsg(`❌ ${res?.message || "Import failed"}`, "error");
+        showMsg(res?.message || "Import failed", "error");
       }
     } catch {
-      showMsg("❌ Upload error. Is VAK Python running?", "error");
+      showMsg("Upload error. Is VAK Python running?", "error");
     }
     setImporting(false);
   }
 
-  // ── Sync external system ──────────────────────────────────────────────────
   async function handleSync(): Promise<void> {
     if (!syncUrl.trim()) {
       showMsg("API URL is required", "error");
@@ -212,14 +290,14 @@ export default function InventoryConfig() {
         inventoryApiKey: syncKey,
       });
       if (res?.success) {
-        showMsg("✅ External system connected!");
+        showMsg("External system connected");
         setShowSync(false);
         loadAll();
       } else {
-        showMsg("❌ Connection failed", "error");
+        showMsg("Connection failed", "error");
       }
     } catch {
-      showMsg("❌ Error connecting", "error");
+      showMsg("Error connecting", "error");
     }
     setSaving(false);
   }
@@ -229,258 +307,249 @@ export default function InventoryConfig() {
   const source = config?.inventorySource || "manual";
   const chatUrl = config?.chatUrl || "";
 
-  if (loading)
-    return (
-      <div style={{ padding: 40, textAlign: "center", color: "#6b7280" }}>
-        Loading...
-      </div>
-    );
-
   return (
-    <div style={S.page}>
+    <div className="iv">
+      <style>{STYLES}</style>
+
       {/* Toast */}
       {toast && (
         <div
-          style={{
-            ...S.toast,
-            background:
-              toast.type === "error"
-                ? "#fef2f2"
-                : toast.type === "info"
-                  ? "#eff6ff"
-                  : "#f0fdf4",
-            color:
-              toast.type === "error"
-                ? "#dc2626"
-                : toast.type === "info"
-                  ? "#1d4ed8"
-                  : "#15803d",
-            borderColor:
-              toast.type === "error"
-                ? "#fca5a5"
-                : toast.type === "info"
-                  ? "#93c5fd"
-                  : "#86efac",
-          }}
+          className={`iv-toast ${
+            toast.type === "error"
+              ? "iv-toast-err"
+              : toast.type === "info"
+                ? "iv-toast-info"
+                : "iv-toast-ok"
+          }`}
         >
           {toast.msg}
         </div>
       )}
 
-      {/* ── Page header ─────────────────────────────────────────────── */}
-      <div style={S.headerRow}>
-        <div>
-          <div style={S.eyebrow}>INVENTORY-AWARE ANSWERS</div>
-          <h2 style={S.pageTitle}>Inventory config</h2>
-          <p style={S.pageSub}>
-            Control which inventory the assistant can recommend and how
-            unmatched demand is captured for your team.
-          </p>
+      {/* ── Header ──────────────────────────────────────────────────── */}
+      <div className="iv-hd">
+        <div className="iv-hd-left">
+          <div className="iv-eyebrow">Inventory-aware answers</div>
+          <div className="iv-hd-title">Inventory config</div>
+          <div className="iv-hd-sub">
+            Control which inventory the assistant recommends and how unmatched
+            demand is captured.
+          </div>
         </div>
+        <div className="iv-hd-right">
+          <button
+            className="iv-btn-secondary"
+            onClick={() => setShowPersona(true)}
+          >
+            ✏️ Persona &amp; Prompt
+          </button>
+          <button
+            className="iv-btn-secondary"
+            onClick={() => setShowSync(true)}
+          >
+            Sync external system
+          </button>
+          <input
+            ref={csvRef}
+            type="file"
+            accept=".csv,.txt,.tsv"
+            style={{ display: "none" }}
+            onChange={handleCsv}
+          />
+          <button
+            className="iv-btn-secondary"
+            onClick={() => csvRef.current?.click()}
+            disabled={importing}
+          >
+            {importing ? "Processing…" : "Import CSV"}
+          </button>
+          <button
+            className="iv-btn-primary"
+            onClick={() => (window.location.href = "/app/inventory")}
+          >
+            Manage inventory
+          </button>
+        </div>
+      </div>
 
-        {/* Status card */}
-        <div style={S.statusCard}>
-          <div style={S.statusTop}>
-            <div style={S.statusIcon}>🏢</div>
-            <div style={{ flex: 1 }}>
-              <div style={S.statusName}>
+      {/* ── Body ────────────────────────────────────────────────────── */}
+      {loading ? (
+        <div className="iv-loading">
+          <div className="iv-loading-spin" />
+          Loading…
+        </div>
+      ) : (
+        <div className="iv-body">
+
+          {/* Status card */}
+          <div className="iv-status-card">
+            <div className="iv-status-icon">🏢</div>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div className="iv-status-name">
                 {config ? orgName || config.companyName : "Not configured"}
               </div>
-              <div style={S.statusSub}>
+              <div className="iv-status-sub">
                 {config
                   ? `${config.domain} · ${items.length} items`
                   : "— · 0 items"}
               </div>
             </div>
+            <div className="iv-status-note" style={{ maxWidth: 280 }}>
+              Featured units appear first. Hidden units are never shown in
+              customer recommendations.
+            </div>
             <span
-              style={{
-                ...S.badge,
-                background: config ? "#d1fae5" : "#fef3c7",
-                color: config ? "#065f46" : "#92400e",
-              }}
+              className={`iv-pill ${config ? "iv-pill-ok" : "iv-pill-wa"}`}
             >
               {config ? "Synced" : "Not set"}
             </span>
+            {chatUrl && (
+              <a
+                href={chatUrl}
+                target="_blank"
+                rel="noreferrer"
+                className="iv-btn-ghost"
+                style={{ textDecoration: "none" }}
+              >
+                Test chat ↗
+              </a>
+            )}
           </div>
 
-          <p style={S.statusNote}>
-            Featured units appear first. Hidden units are never shown in
-            customer recommendations.
-          </p>
-
-          {/* Test chat — only when configured */}
+          {/* Embed bar */}
           {chatUrl && (
-            <a
-              href={chatUrl}
-              target="_blank"
-              rel="noreferrer"
-              style={S.testChatLink}
-            >
-              🧪 Test chat →
-            </a>
+            <div className="iv-embed-bar">
+              <span className="iv-embed-label">Chat URL</span>
+              <code className="iv-embed-code">{chatUrl}</code>
+              <button
+                className="iv-btn-ghost"
+                onClick={() => {
+                  navigator.clipboard.writeText(
+                    `<script src="https://vak.ai/static/widget.js?company=${config?.companyId}"></script>`,
+                  );
+                  showMsg("Embed code copied");
+                }}
+              >
+                Copy embed
+              </button>
+              <a
+                href={chatUrl}
+                target="_blank"
+                rel="noreferrer"
+                className="iv-btn-ghost"
+                style={{ textDecoration: "none" }}
+              >
+                Open ↗
+              </a>
+            </div>
           )}
-        </div>
-      </div>
 
-      {/* ── Action buttons ──────────────────────────────────────────── */}
-      <div style={S.btnRow}>
-        <button
-          style={S.btnPrimary}
-          onClick={() => (window.location.href = "/app/inventory")}
-        >
-          Manage inventory
-        </button>
+          {/* Recommendation controls card */}
+          <div className="iv-card">
+            <div className="iv-card-hdr">
+              <div className="iv-card-icon">🎯</div>
+              <div>
+                <div className="iv-card-title">Recommendation controls</div>
+                <div className="iv-card-sub">
+                  Rules for surfacing, hiding, and logging inventory-related
+                  demand.
+                </div>
+              </div>
+            </div>
 
-        {/* Hidden file input */}
-        <input
-          ref={csvRef}
-          type="file"
-          accept=".csv,.txt,.tsv"
-          style={{ display: "none" }}
-          onChange={handleCsv}
-        />
-        <button
-          style={S.btnSecondary}
-          onClick={() => csvRef.current?.click()}
-          disabled={importing}
-        >
-          {importing ? "⏳ Processing..." : "Import CSV"}
-        </button>
+            <table className="iv-table">
+              <thead>
+                <tr>
+                  {["Setting", "Status", "Detail", ""].map((h) => (
+                    <th key={h} className="iv-th">
+                      {h}
+                    </th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                <IvRow
+                  name="Active vertical"
+                  desc={
+                    config?.domain
+                      ? `${config.domain} — units, rent, amenities, availability`
+                      : "Not configured"
+                  }
+                  pillLabel={config ? "Active" : "Not set"}
+                  pillClass={config ? "iv-pill-ok" : "iv-pill-wa"}
+                  detail={config?.domain || "—"}
+                  actionLabel="Change"
+                  onAction={() => setShowPersona(true)}
+                />
 
-        <button style={S.btnSecondary} onClick={() => setShowSync(true)}>
-          Sync external system
-        </button>
+                <IvRow
+                  name="Featured items"
+                  desc={
+                    featured.length > 0
+                      ? `${featured.map((i) => i.itemName).join(", ")} pinned first`
+                      : "No featured items set"
+                  }
+                  pillLabel={featured.length > 0 ? "Featured" : "None"}
+                  pillClass={
+                    featured.length > 0 ? "iv-pill-wa" : "iv-pill-muted"
+                  }
+                  detail={`${featured.length} items`}
+                  actionLabel="Edit"
+                  onAction={() => (window.location.href = "/app/inventory")}
+                />
 
-        <button style={S.btnSecondary} onClick={() => setShowPersona(true)}>
-          ✏️ Persona & Prompt
-        </button>
-      </div>
+                <IvRow
+                  name="Hidden items"
+                  desc={
+                    hidden.length > 0
+                      ? hidden.map((i) => i.itemName).join(", ")
+                      : "No items are currently hidden"
+                  }
+                  pillLabel={
+                    hidden.length > 0 ? `${hidden.length} hidden` : "None"
+                  }
+                  pillClass="iv-pill-muted"
+                  detail={`${hidden.length} items`}
+                  actionLabel="Edit"
+                  onAction={() => (window.location.href = "/app/inventory")}
+                />
 
-      {/* Embed + Test chat row */}
-      {chatUrl && (
-        <div style={S.embedRow}>
-          <span style={S.embedLabel}>Chat URL:</span>
-          <code style={S.embedCode}>{chatUrl}</code>
-          <button
-            style={S.copyBtn}
-            onClick={() => {
-              navigator.clipboard.writeText(
-                `<script src="https://vak.ai/static/widget.js?company=${config?.companyId}"></script>`,
-              );
-              showMsg("Embed code copied!");
-            }}
-          >
-            Copy embed
-          </button>
-          <a href={chatUrl} target="_blank" rel="noreferrer" style={S.testBtn}>
-            Test chat ↗
-          </a>
+                <IvRow
+                  name="Inventory source"
+                  desc={
+                    source === "api"
+                      ? "Connected to external API — always real-time"
+                      : source === "webhook"
+                        ? "Webhook — company pushes updates"
+                        : "Manual — admin manages in Inventory tab"
+                  }
+                  pillLabel={source}
+                  pillClass={source === "api" ? "iv-pill-p" : "iv-pill-muted"}
+                  detail={
+                    source === "api" ? config?.inventoryApiUrl || "—" : "—"
+                  }
+                  actionLabel="Change"
+                  onAction={() => setShowSync(true)}
+                />
+              </tbody>
+            </table>
+          </div>
         </div>
       )}
 
-      {/* ── Recommendation controls ─────────────────────────────────── */}
-      <div style={S.card}>
-        <div style={S.cardHead}>
-          <span style={{ fontSize: 22 }}>🎯</span>
-          <div>
-            <div style={S.cardTitle}>Recommendation controls</div>
-            <div style={S.cardSub}>
-              Simple rules for surfacing, hiding, and logging inventory-related
-              demand.
-            </div>
-          </div>
-        </div>
-
-        <table style={{ width: "100%", borderCollapse: "collapse" }}>
-          <thead>
-            <tr style={{ background: "#fafafa" }}>
-              {["SETTING", "STATUS", "DETAIL", ""].map((h) => (
-                <th key={h} style={S.th}>
-                  {h}
-                </th>
-              ))}
-            </tr>
-          </thead>
-          <tbody>
-            <Row
-              name="Active vertical"
-              desc={
-                config?.domain
-                  ? `${config.domain} — units, rent, amenities, availability`
-                  : "Not configured"
-              }
-              pill={config ? "Active" : "Not set"}
-              pillBg={config ? "#d1fae5" : "#fef3c7"}
-              pillColor={config ? "#065f46" : "#92400e"}
-              detail={config?.domain || "—"}
-              actionLabel="Change"
-              onAction={() => setShowPersona(true)}
-            />
-
-            <Row
-              name="Featured items"
-              desc={
-                featured.length > 0
-                  ? `${featured.map((i) => i.itemName).join(", ")} pinned first`
-                  : "No featured items set"
-              }
-              pill={featured.length > 0 ? "Featured" : "None"}
-              pillBg={featured.length > 0 ? "#fef3c7" : "#f3f4f6"}
-              pillColor={featured.length > 0 ? "#92400e" : "#6b7280"}
-              detail={`${featured.length} items`}
-              actionLabel="Edit"
-              onAction={() => (window.location.href = "/app/inventory")}
-            />
-
-            <Row
-              name="Hidden items"
-              desc={
-                hidden.length > 0
-                  ? hidden.map((i) => i.itemName).join(", ")
-                  : "No items are currently hidden"
-              }
-              pill={hidden.length > 0 ? `${hidden.length} hidden` : "None"}
-              pillBg="#f3f4f6"
-              pillColor="#6b7280"
-              detail={`${hidden.length} items`}
-              actionLabel="Edit"
-              onAction={() => (window.location.href = "/app/inventory")}
-            />
-
-            <Row
-              name="Inventory source"
-              desc={
-                source === "api"
-                  ? "Connected to external API — always real-time"
-                  : source === "webhook"
-                    ? "Webhook — company pushes updates"
-                    : "Manual — admin manages in Inventory tab"
-              }
-              pill={source}
-              pillBg={source === "api" ? "#eff6ff" : "#f3f4f6"}
-              pillColor={source === "api" ? "#1d4ed8" : "#6b7280"}
-              detail={source === "api" ? config?.inventoryApiUrl || "—" : "—"}
-              actionLabel="Change"
-              onAction={() => setShowSync(true)}
-            />
-          </tbody>
-        </table>
-      </div>
-
       {/* ── Persona & Prompt Modal ──────────────────────────────────── */}
       {showPersona && (
-        <Modal title="Persona & Prompt" onClose={() => setShowPersona(false)}>
-          {/* Company name — read only */}
-          <div style={S.readOnlyRow}>
-            <span style={S.readOnlyLabel}>Company</span>
-            <span style={S.readOnlyValue}>{orgName || "Your Company"}</span>
-            <span style={S.readOnlyHint}>From your organization settings</span>
+        <IvModal title="Persona & Prompt" onClose={() => setShowPersona(false)}>
+          <div className="iv-readonly-row">
+            <span className="iv-readonly-label">Company</span>
+            <span className="iv-readonly-val">{orgName || "Your Company"}</span>
+            <span className="iv-readonly-hint">From organization settings</span>
           </div>
 
-          <div style={S.grid2}>
-            <Field label="Domain / Vertical">
+          <div className="iv-grid2">
+            <IvField label="Domain / Vertical">
               <select
-                style={S.input}
+                className="iv-input"
                 value={form.domain}
                 onChange={(e) => setForm({ ...form, domain: e.target.value })}
               >
@@ -491,9 +560,9 @@ export default function InventoryConfig() {
                 <option value="legal">Legal</option>
                 <option value="general">General</option>
               </select>
-            </Field>
+            </IvField>
 
-            <Field label="Brand Color">
+            <IvField label="Brand Color">
               <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
                 <input
                   type="color"
@@ -501,21 +570,22 @@ export default function InventoryConfig() {
                   onChange={(e) =>
                     setForm({ ...form, brandColor: e.target.value })
                   }
-                  style={S.colorPicker}
+                  className="iv-color-picker"
                 />
                 <input
-                  style={{ ...S.input, flex: 1 }}
+                  className="iv-input"
+                  style={{ flex: 1 }}
                   value={form.brandColor}
                   onChange={(e) =>
                     setForm({ ...form, brandColor: e.target.value })
                   }
                 />
               </div>
-            </Field>
+            </IvField>
 
-            <Field label="Inventory Source">
+            <IvField label="Inventory Source">
               <select
-                style={S.input}
+                className="iv-input"
                 value={form.inventorySource}
                 onChange={(e) =>
                   setForm({ ...form, inventorySource: e.target.value })
@@ -527,72 +597,76 @@ export default function InventoryConfig() {
                   Webhook (company pushes updates)
                 </option>
               </select>
-            </Field>
+            </IvField>
 
-            <Field label="Welcome Message">
+            <IvField label="Welcome Message">
               <input
-                style={S.input}
+                className="iv-input"
                 value={form.welcomeMessage}
                 onChange={(e) =>
                   setForm({ ...form, welcomeMessage: e.target.value })
                 }
                 placeholder="Hi! I'm Vak 👋 How can I help?"
               />
-            </Field>
+            </IvField>
 
-            <Field label="System Prompt" full>
+            <IvField label="System Prompt" full>
               <textarea
-                style={{ ...S.input, height: 90, resize: "vertical" }}
+                className="iv-input"
+                style={{ height: 88, resize: "vertical" }}
                 value={form.systemPrompt}
                 onChange={(e) =>
                   setForm({ ...form, systemPrompt: e.target.value })
                 }
                 placeholder={`You are Vak, the AI assistant for ${orgName || "[Company]"}. Help customers find the right option. Ask ONE question at a time.`}
               />
-            </Field>
+            </IvField>
 
-            <Field label="Opportunity Signals (comma separated)" full>
+            <IvField label="Opportunity Signals (comma separated)" full>
               <input
-                style={S.input}
+                className="iv-input"
                 value={form.opportunitySignals}
                 onChange={(e) =>
                   setForm({ ...form, opportunitySignals: e.target.value })
                 }
                 placeholder="book a viewing, I want to rent, schedule a visit"
               />
-              <p style={S.hint}>
+              <p className="iv-hint">
                 These phrases trigger an opportunity in Zotra when a customer
                 says them.
               </p>
-            </Field>
+            </IvField>
           </div>
 
-          <div style={S.modalFoot}>
+          <div className="iv-modal-ft">
             <button
-              style={S.btnSecondary}
+              className="iv-btn-secondary"
               onClick={() => setShowPersona(false)}
             >
               Cancel
             </button>
             <button
-              style={S.btnPrimary}
+              className="iv-btn-primary"
               onClick={savePersona}
               disabled={saving}
             >
-              {saving ? "Saving..." : "Save Config"}
+              {saving ? "Saving…" : "Save config"}
             </button>
           </div>
-        </Modal>
+        </IvModal>
       )}
 
       {/* ── Sync External System Modal ──────────────────────────────── */}
       {showSync && (
-        <Modal title="Sync External System" onClose={() => setShowSync(false)}>
+        <IvModal
+          title="Sync external system"
+          onClose={() => setShowSync(false)}
+        >
           <p
             style={{
-              color: "#6b7280",
-              fontSize: 14,
-              marginBottom: 20,
+              color: "var(--ink4)",
+              fontSize: 13,
+              marginBottom: 18,
               lineHeight: 1.6,
             }}
           >
@@ -600,89 +674,85 @@ export default function InventoryConfig() {
             message for real-time inventory — no CSV upload needed.
           </p>
 
-          <Field label="Your API URL">
+          <IvField label="Your API URL">
             <input
-              style={S.input}
+              className="iv-input"
               value={syncUrl}
               onChange={(e) => setSyncUrl(e.target.value)}
               placeholder="https://your-system.com/api/inventory"
             />
-            <p style={S.hint}>
+            <p className="iv-hint">
               VAK calls this on every message to get live inventory.
             </p>
-          </Field>
+          </IvField>
 
-          <Field label="API Key (optional)">
-            <input
-              style={{ ...S.input, marginTop: 12 }}
-              value={syncKey}
-              onChange={(e) => setSyncKey(e.target.value)}
-              placeholder="Bearer your-secret-key"
-            />
-            <p style={S.hint}>Leave empty if your API is public.</p>
-          </Field>
+          <div style={{ marginTop: 14 }}>
+            <IvField label="API Key (optional)">
+              <input
+                className="iv-input"
+                value={syncKey}
+                onChange={(e) => setSyncKey(e.target.value)}
+                placeholder="Bearer your-secret-key"
+              />
+              <p className="iv-hint">Leave empty if your API is public.</p>
+            </IvField>
+          </div>
 
-          <div style={{ ...S.modalFoot, marginTop: 24 }}>
-            <button style={S.btnSecondary} onClick={() => setShowSync(false)}>
+          <div className="iv-modal-ft">
+            <button
+              className="iv-btn-secondary"
+              onClick={() => setShowSync(false)}
+            >
               Cancel
             </button>
-            <button style={S.btnPrimary} onClick={handleSync} disabled={saving}>
-              {saving ? "Connecting..." : "Connect System"}
+            <button
+              className="iv-btn-primary"
+              onClick={handleSync}
+              disabled={saving}
+            >
+              {saving ? "Connecting…" : "Connect system"}
             </button>
           </div>
-        </Modal>
+        </IvModal>
       )}
     </div>
   );
 }
 
 // ── Row component ─────────────────────────────────────────────────────────────
-interface RowProps {
+interface IvRowProps {
   name: string;
   desc: string;
-  pill: string;
-  pillBg: string;
-  pillColor: string;
+  pillLabel: string;
+  pillClass: string;
   detail: string;
   actionLabel: string;
   onAction: () => void;
 }
 
-function Row({
+function IvRow({
   name,
   desc,
-  pill,
-  pillBg,
-  pillColor,
+  pillLabel,
+  pillClass,
   detail,
   actionLabel,
   onAction,
-}: RowProps) {
+}: IvRowProps) {
   return (
-    <tr style={{ borderBottom: "1px solid #f3f4f6" }}>
-      <td style={S.td}>
-        <div style={{ fontWeight: 600, color: "#111827", marginBottom: 2 }}>
-          {name}
-        </div>
-        <div style={{ fontSize: 13, color: "#6b7280" }}>{desc}</div>
+    <tr>
+      <td className="iv-td">
+        <div className="iv-td-name">{name}</div>
+        <div className="iv-td-desc">{desc}</div>
       </td>
-      <td style={S.td}>
-        <span
-          style={{
-            padding: "3px 12px",
-            borderRadius: 20,
-            fontSize: 12,
-            fontWeight: 700,
-            background: pillBg,
-            color: pillColor,
-          }}
-        >
-          {pill}
-        </span>
+      <td className="iv-td">
+        <span className={`iv-pill ${pillClass}`}>{pillLabel}</span>
       </td>
-      <td style={{ ...S.td, color: "#9ca3af", fontSize: 13 }}>{detail}</td>
-      <td style={S.td}>
-        <button style={S.actionBtn} onClick={onAction}>
+      <td className="iv-td">
+        <span className="iv-td-detail">{detail}</span>
+      </td>
+      <td className="iv-td">
+        <button className="iv-action-btn" onClick={onAction}>
           {actionLabel}
         </button>
       </td>
@@ -691,19 +761,19 @@ function Row({
 }
 
 // ── Modal component ───────────────────────────────────────────────────────────
-interface ModalProps {
+interface IvModalProps {
   title: string;
   onClose: () => void;
   children: React.ReactNode;
 }
 
-function Modal({ title, onClose, children }: ModalProps) {
+function IvModal({ title, onClose, children }: IvModalProps) {
   return (
-    <div style={S.overlay}>
-      <div style={S.modal}>
-        <div style={S.modalHead}>
-          <h3 style={{ margin: 0, fontSize: 18, fontWeight: 700 }}>{title}</h3>
-          <button onClick={onClose} style={S.closeBtn}>
+    <div className="iv-overlay">
+      <div className="iv-modal">
+        <div className="iv-modal-hd">
+          <span className="iv-modal-title">{title}</span>
+          <button onClick={onClose} className="iv-modal-close">
             ✕
           </button>
         </div>
@@ -714,284 +784,17 @@ function Modal({ title, onClose, children }: ModalProps) {
 }
 
 // ── Field component ───────────────────────────────────────────────────────────
-interface FieldProps {
+interface IvFieldProps {
   label: string;
   children: React.ReactNode;
   full?: boolean;
 }
 
-function Field({ label, children, full }: FieldProps) {
+function IvField({ label, children, full }: IvFieldProps) {
   return (
     <div style={{ gridColumn: full ? "1/-1" : "auto" }}>
-      <label style={S.fieldLbl}>{label}</label>
+      <label className="iv-field-lbl">{label}</label>
       {children}
     </div>
   );
 }
-
-// ── Styles ────────────────────────────────────────────────────────────────────
-const S: Record<string, React.CSSProperties> = {
-  page: {
-    padding: "28px 32px",
-    maxWidth: 1100,
-    fontFamily: "Inter,system-ui,Arial,sans-serif",
-  },
-  toast: {
-    position: "fixed",
-    top: 20,
-    right: 20,
-    padding: "12px 20px",
-    borderRadius: 10,
-    border: "1px solid",
-    fontSize: 14,
-    fontWeight: 600,
-    zIndex: 2000,
-    boxShadow: "0 4px 12px rgba(0,0,0,0.1)",
-  },
-  eyebrow: {
-    fontSize: 11,
-    fontWeight: 700,
-    color: "#6366f1",
-    letterSpacing: 1,
-    textTransform: "uppercase",
-    marginBottom: 4,
-  },
-  pageTitle: {
-    fontSize: 26,
-    fontWeight: 800,
-    color: "#111827",
-    margin: "4px 0 8px",
-  },
-  pageSub: { fontSize: 14, color: "#6b7280", maxWidth: 560, lineHeight: 1.6 },
-  headerRow: {
-    display: "flex",
-    justifyContent: "space-between",
-    alignItems: "flex-start",
-    gap: 24,
-    marginBottom: 24,
-    flexWrap: "wrap",
-  },
-  statusCard: {
-    background: "#fafafa",
-    border: "1px solid #e5e7eb",
-    borderRadius: 12,
-    padding: "16px 20px",
-    minWidth: 280,
-    maxWidth: 360,
-  },
-  statusTop: {
-    display: "flex",
-    alignItems: "center",
-    gap: 10,
-    marginBottom: 10,
-  },
-  statusIcon: {
-    fontSize: 28,
-    background: "#ede9fe",
-    borderRadius: 10,
-    padding: "6px 10px",
-    lineHeight: 1,
-  },
-  statusName: { fontWeight: 700, fontSize: 15, color: "#111827" },
-  statusSub: { fontSize: 12, color: "#6b7280", marginTop: 2 },
-  badge: {
-    padding: "3px 12px",
-    borderRadius: 20,
-    fontSize: 12,
-    fontWeight: 700,
-  },
-  statusNote: {
-    fontSize: 12,
-    color: "#6b7280",
-    margin: "0 0 12px",
-    lineHeight: 1.5,
-  },
-  testChatLink: {
-    display: "inline-block",
-    fontSize: 13,
-    color: "#6366f1",
-    fontWeight: 700,
-    textDecoration: "none",
-    padding: "6px 14px",
-    background: "#eff6ff",
-    borderRadius: 8,
-  },
-  btnRow: { display: "flex", gap: 10, marginBottom: 20, flexWrap: "wrap" },
-  btnPrimary: {
-    padding: "9px 20px",
-    background: "#6366f1",
-    color: "#fff",
-    border: "none",
-    borderRadius: 8,
-    cursor: "pointer",
-    fontSize: 14,
-    fontWeight: 600,
-  },
-  btnSecondary: {
-    padding: "9px 20px",
-    background: "#fff",
-    color: "#374151",
-    border: "1px solid #d1d5db",
-    borderRadius: 8,
-    cursor: "pointer",
-    fontSize: 14,
-    fontWeight: 500,
-  },
-  embedRow: {
-    display: "flex",
-    alignItems: "center",
-    gap: 10,
-    background: "#f9fafb",
-    border: "1px solid #e5e7eb",
-    borderRadius: 8,
-    padding: "10px 16px",
-    marginBottom: 20,
-    flexWrap: "wrap",
-  },
-  embedLabel: {
-    fontSize: 13,
-    color: "#6b7280",
-    fontWeight: 600,
-    whiteSpace: "nowrap",
-  },
-  embedCode: {
-    fontSize: 12,
-    color: "#374151",
-    flex: 1,
-    overflow: "hidden",
-    textOverflow: "ellipsis",
-    whiteSpace: "nowrap",
-  },
-  copyBtn: {
-    padding: "5px 14px",
-    background: "#ede9fe",
-    color: "#6366f1",
-    border: "none",
-    borderRadius: 6,
-    cursor: "pointer",
-    fontSize: 13,
-    fontWeight: 600,
-  },
-  testBtn: {
-    padding: "5px 14px",
-    background: "#d1fae5",
-    color: "#065f46",
-    borderRadius: 6,
-    textDecoration: "none",
-    fontSize: 13,
-    fontWeight: 600,
-  },
-  card: {
-    border: "1px solid #e5e7eb",
-    borderRadius: 12,
-    overflow: "hidden",
-    marginBottom: 24,
-  },
-  cardHead: {
-    display: "flex",
-    alignItems: "center",
-    gap: 12,
-    padding: "16px 20px",
-    borderBottom: "1px solid #e5e7eb",
-    background: "#fafafa",
-  },
-  cardTitle: { fontWeight: 700, fontSize: 15, color: "#111827" },
-  cardSub: { fontSize: 13, color: "#6b7280", marginTop: 2 },
-  th: {
-    padding: "10px 20px",
-    fontSize: 11,
-    fontWeight: 700,
-    color: "#9ca3af",
-    textAlign: "left",
-    borderBottom: "1px solid #e5e7eb",
-  },
-  td: { padding: "16px 20px" },
-  actionBtn: {
-    padding: "5px 14px",
-    background: "#fff",
-    border: "1px solid #e5e7eb",
-    borderRadius: 6,
-    cursor: "pointer",
-    fontSize: 13,
-    color: "#374151",
-    fontWeight: 500,
-  },
-  overlay: {
-    position: "fixed",
-    inset: 0,
-    background: "rgba(0,0,0,0.45)",
-    display: "flex",
-    alignItems: "center",
-    justifyContent: "center",
-    zIndex: 1000,
-  },
-  modal: {
-    background: "#fff",
-    borderRadius: 14,
-    padding: "28px 32px",
-    width: 580,
-    maxHeight: "88vh",
-    overflowY: "auto",
-    boxShadow: "0 20px 60px rgba(0,0,0,0.2)",
-  },
-  modalHead: {
-    display: "flex",
-    justifyContent: "space-between",
-    alignItems: "center",
-    marginBottom: 20,
-  },
-  modalFoot: {
-    display: "flex",
-    justifyContent: "flex-end",
-    gap: 10,
-    marginTop: 20,
-  },
-  closeBtn: {
-    background: "none",
-    border: "none",
-    fontSize: 20,
-    cursor: "pointer",
-    color: "#9ca3af",
-    lineHeight: 1,
-  },
-  readOnlyRow: {
-    display: "flex",
-    alignItems: "center",
-    gap: 10,
-    background: "#f9fafb",
-    border: "1px solid #e5e7eb",
-    borderRadius: 8,
-    padding: "10px 16px",
-    marginBottom: 20,
-  },
-  readOnlyLabel: { fontSize: 12, fontWeight: 700, color: "#6b7280", width: 70 },
-  readOnlyValue: { fontSize: 15, fontWeight: 700, color: "#111827", flex: 1 },
-  readOnlyHint: { fontSize: 12, color: "#9ca3af" },
-  grid2: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 },
-  fieldLbl: {
-    display: "block",
-    fontSize: 12,
-    fontWeight: 600,
-    color: "#374151",
-    marginBottom: 6,
-  },
-  input: {
-    width: "100%",
-    padding: "9px 12px",
-    border: "1px solid #d1d5db",
-    borderRadius: 8,
-    fontSize: 14,
-    boxSizing: "border-box",
-    outline: "none",
-    fontFamily: "inherit",
-  },
-  colorPicker: {
-    width: 48,
-    height: 38,
-    border: "1px solid #d1d5db",
-    borderRadius: 6,
-    cursor: "pointer",
-    padding: 2,
-  },
-  hint: { fontSize: 12, color: "#9ca3af", marginTop: 5, marginBottom: 0 },
-};

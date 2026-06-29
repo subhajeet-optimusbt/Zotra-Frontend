@@ -293,13 +293,27 @@ function relTime(iso?: string | null): string {
   }
 }
 
-// ─── Pipeline stages ──────────────────────────────────────────────────────────
-const PIPELINE_STAGES = [
-  { id: "qualify", label: "Qualification" },
-  { id: "shaping", label: "Shaping" },
-  { id: "development", label: "Development" },
-  { id: "closing", label: "Closing" },
-];
+// ─── Reply body formatter ─────────────────────────────────────────────────────
+function splitIntoSentences(body: string): string[] {
+  // Split after every . or ? (followed by space or end of string), keeping punctuation attached
+  const parts = body.split(/(?<=[.?])(?:\s+|$)/);
+  return parts.map((s) => s.trim()).filter(Boolean);
+}
+
+function formatReplyBody(body: string): React.ReactNode {
+  const sentences = splitIntoSentences(body);
+  return sentences.map((sentence, i) => (
+    <React.Fragment key={i}>
+      {sentence}
+      {i < sentences.length - 1 && <br />}
+    </React.Fragment>
+  ));
+}
+
+function bodyToEditText(body: string): string {
+  // Convert body to newline-separated sentences for the textarea
+  return splitIntoSentences(body).join("\n");
+}
 
 const TABS = [
   { id: "overview", label: "Overview", icon: "layout-grid" },
@@ -324,7 +338,6 @@ const ODP_CSS = `
 
 .odp-backdrop{position:absolute;inset:0;background:rgba(20,18,40,.32);backdrop-filter:blur(3px);-webkit-backdrop-filter:blur(3px);z-index:29;animation:odp-bd-in .18s ease;}
 
-/* Panel — fills parent height, no overflow on the panel itself */
 .odp-panel{
   position:absolute;top:0;right:0;bottom:0;
   background:var(--bg,#fff);
@@ -336,13 +349,11 @@ const ODP_CSS = `
   animation:odp-slide-in .22s cubic-bezier(.4,0,.2,1);
 }
 
-/* ── Resize handle — now visually obvious ── */
 .odp-resize{
   position:absolute;left:0;top:0;bottom:0;width:16px;
   cursor:ew-resize;z-index:31;
   display:flex;align-items:center;justify-content:center;
 }
-/* The grip strip itself */
 .odp-resize-grip{
   display:flex;flex-direction:column;align-items:center;justify-content:center;
   gap:3px;
@@ -365,7 +376,6 @@ const ODP_CSS = `
 }
 .odp-resize-dot:nth-child(2){animation-delay:.25s;}
 .odp-resize-dot:nth-child(3){animation-delay:.5s;}
-/* Tooltip hint — shows once on mount */
 .odp-resize-hint{
   position:absolute;left:20px;top:50%;transform:translateY(-50%);
   background:rgba(30,27,60,.88);color:#fff;
@@ -382,7 +392,6 @@ const ODP_CSS = `
 }
 .odp-resize:hover .odp-resize-hint{opacity:1;}
 
-/* ── Header (replaces topbar + old hdr split) ── */
 .odp-hdr{
   padding:12px 16px 0;
   border-bottom:0.5px solid var(--brd,#e2e8f0);
@@ -391,7 +400,7 @@ const ODP_CSS = `
 }
 .odp-hdr-top{
   display:flex;align-items:center;gap:8px;
-  margin-bottom:10px;
+  margin-bottom:12px;
 }
 .odp-av{width:36px;height:36px;border-radius:10px;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:700;color:#fff;flex-shrink:0;}
 .odp-hdr-name-block{flex:1;min-width:0;}
@@ -404,18 +413,50 @@ const ODP_CSS = `
 .odp-close-btn:hover{filter:brightness(.88);}
 .odp-opp-id{font-family:"DM Mono",monospace;font-size:9px;color:var(--ink5,#9399a8);letter-spacing:0.04em;margin-top:1px;}
 
-/* Stats */
-.odp-stats{display:grid;grid-template-columns:repeat(4,1fr);border:0.5px solid var(--brd,#e2e8f0);border-radius:10px;overflow:hidden;margin:0 0 12px;}
-.odp-stat{padding:8px 10px;border-right:0.5px solid var(--brd,#e2e8f0);}
-.odp-stat:last-child{border-right:none;}
-.odp-stat-l{font-size:8.5px;font-weight:700;letter-spacing:.10em;text-transform:uppercase;color:var(--ink5,#9399a8);margin-bottom:3px;}
-.odp-stat-v{font-family:"Sora",sans-serif;font-size:13px;font-weight:700;letter-spacing:-0.02em;color:var(--ink,#0f1117);line-height:1;}
+/* ── Stats strip — individual accent-bordered cards ── */
+.odp-stats{
+  display:grid;grid-template-columns:repeat(4,1fr);
+  gap:8px;
+  margin:0 0 14px;
+}
+.odp-stat{
+  padding:10px 12px 11px;
+  border-radius:9px;
+  border:0.5px solid var(--brd,#e2e8f0);
+  background:var(--bg,#fff);
+  border-left:3px solid transparent;
+  transition:box-shadow .15s;
+  position:relative;
+}
+.odp-stat:hover{box-shadow:0 2px 12px rgba(0,0,0,.08);}
+.odp-stat.accent-value{border-left-color:#22c55e;background:linear-gradient(105deg,rgba(34,197,94,0.04) 0%,transparent 60%);}
+.odp-stat.accent-score{border-left-color:#4B48C8;background:linear-gradient(105deg,rgba(75,72,200,0.05) 0%,transparent 60%);}
+.odp-stat.accent-days{border-left-color:#f59e0b;background:linear-gradient(105deg,rgba(245,158,11,0.04) 0%,transparent 60%);}
+.odp-stat.accent-phase{border-left-color:#0ea5e9;background:linear-gradient(105deg,rgba(14,165,233,0.04) 0%,transparent 60%);}
+.odp-stat-l{
+  font-size:8px;font-weight:700;letter-spacing:.11em;
+  text-transform:uppercase;color:var(--ink5,#9399a8);
+  margin-bottom:5px;line-height:1;
+}
+.odp-stat-v{
+  font-family:"Sora",sans-serif;font-size:15px;font-weight:800;
+  letter-spacing:-0.03em;color:var(--ink,#0f1117);line-height:1.1;
+}
 .odp-stat-v.pscore{color:#4B48C8;}
 .odp-stat-v.heat-hot{color:#E5566C;}
 .odp-stat-v.heat-warm{color:#D97757;}
 .odp-stat-v.heat-cool{color:#4B6FDB;}
+/* Phase pill inside the stat card */
+.odp-stat-phase-pill{
+  display:inline-flex;padding:3px 9px;
+  border-radius:20px;font-size:11px;font-weight:700;
+  background:rgba(14,165,233,0.10);color:#0369a1;
+  border:0.5px solid rgba(14,165,233,0.22);
+  letter-spacing:.01em;line-height:1.4;
+  max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+}
 
-/* Stepper */
+/* ── Stepper ── */
 .odp-stepper{display:flex;align-items:center;padding:10px 16px 12px;gap:0;flex-shrink:0;}
 .odp-step{display:flex;flex-direction:column;align-items:center;gap:4px;flex:1;}
 .odp-step-circle{width:24px;height:24px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:700;border:2px solid var(--brd2,#dde1ea);background:var(--bg3,#f1f3f7);color:var(--ink5,#9399a8);position:relative;z-index:2;flex-shrink:0;transition:background .2s,border-color .2s,color .2s;}
@@ -433,12 +474,18 @@ const ODP_CSS = `
 .odp-warn-btn{font-size:11px;font-weight:600;color:#78540e;border:0.5px solid #d4a309;border-radius:6px;padding:3px 9px;background:transparent;cursor:pointer;white-space:nowrap;flex-shrink:0;transition:background .12s;}
 .odp-warn-btn:hover{background:rgba(245,216,120,.25);}
 
-/* Tabs */
-.odp-tabs{display:flex;align-items:stretch;border-bottom:0.5px solid var(--brd,#e2e8f0);padding:0 12px;flex-shrink:0;overflow-x:auto;background:var(--bg2,#f8fafc);gap:1px;}
+/* ── Tabs — refined with icon background + active pill ── */
+.odp-tabs{
+  display:flex;align-items:stretch;
+  padding:0 12px;gap:2px;
+  flex-shrink:0;overflow-x:auto;
+  background:var(--bg2,#f8fafc);
+  border-bottom:1px solid var(--brd,#e2e8f0);
+}
 .odp-tabs::-webkit-scrollbar{display:none;}
 .odp-tab{
-  display:inline-flex;align-items:center;gap:6px;
-  height:40px;padding:0 10px;
+  display:inline-flex;align-items:center;gap:5px;
+  height:42px;padding:0 9px;
   font-size:11.5px;font-weight:500;
   color:var(--ink4,#6b7280);
   border:none;background:transparent;cursor:pointer;
@@ -447,8 +494,12 @@ const ODP_CSS = `
   transition:color .12s,background .12s;
   position:relative;top:0.5px;
   border-radius:6px 6px 0 0;
+  letter-spacing:-0.01em;
 }
-.odp-tab:hover{color:var(--ink);background:rgba(75,72,200,0.05);}
+.odp-tab:hover{
+  color:var(--ink,#0f1117);
+  background:rgba(75,72,200,0.04);
+}
 .odp-tab.active{
   color:#4B48C8;font-weight:700;
   border-bottom-color:#4B48C8;
@@ -456,23 +507,24 @@ const ODP_CSS = `
 }
 .odp-tab .odp-tab-icon{
   display:flex;align-items:center;justify-content:center;
-  width:18px;height:18px;border-radius:5px;
-  background:transparent;
-  transition:background .12s;
+  width:20px;height:20px;border-radius:6px;
+  background:rgba(0,0,0,0.04);
+  color:var(--ink5,#9399a8);
+  transition:background .12s,color .12s;
   flex-shrink:0;
 }
-.odp-tab:hover .odp-tab-icon{background:rgba(75,72,200,0.08);}
-.odp-tab.active .odp-tab-icon{background:rgba(75,72,200,0.14);}
+.odp-tab:hover .odp-tab-icon{background:rgba(75,72,200,0.09);color:#4B48C8;}
+.odp-tab.active .odp-tab-icon{background:rgba(75,72,200,0.16);color:#4B48C8;}
 .odp-tab-badge{
   display:inline-flex;align-items:center;justify-content:center;
-  min-width:15px;height:15px;padding:0 4px;
+  min-width:16px;height:16px;padding:0 4px;
   border-radius:99px;
   background:#E5566C;color:#fff;
-  font-size:8px;font-weight:700;line-height:1;
+  font-size:8.5px;font-weight:700;line-height:1;
 }
 .odp-tab.active .odp-tab-badge{background:#4B48C8;}
 
-/* Body — takes all remaining height, scrolls internally */
+/* Body */
 .odp-body{
   flex:1;
   overflow-y:auto;
@@ -526,7 +578,7 @@ const ODP_CSS = `
 .odp-ov-kv-l{font-size:8.5px;font-weight:700;letter-spacing:.09em;text-transform:uppercase;color:var(--ink5);margin-bottom:4px;}
 .odp-ov-kv-v{font-size:12.5px;font-weight:700;color:var(--ink);}
 
-/* ── Inference cards ── */
+/* Inference cards */
 .odp-inf-list{display:flex;flex-direction:column;gap:0;}
 .odp-inf-card{display:flex;align-items:stretch;gap:0;border-bottom:0.5px solid var(--brd);padding:14px 16px;transition:background .12s;}
 .odp-inf-card:last-child{border-bottom:none;}
@@ -589,7 +641,6 @@ const ODP_CSS = `
 .odp-gap-quote{margin:0 14px;padding:9px 12px;background:var(--bg3,#f8fafc);border-radius:7px;font-size:12px;font-style:italic;color:var(--ink3);line-height:1.55;border-left:2.5px solid #4B48C8;}
 .odp-gap-desc{padding:8px 14px 12px;font-size:11.5px;color:var(--ink4);line-height:1.55;}
 
-/* gap status pill */
 .odp-gap-status{display:inline-flex;align-items:center;gap:4px;padding:2px 8px;border-radius:20px;font-size:10px;font-weight:700;letter-spacing:.03em;white-space:nowrap;flex-shrink:0;}
 .odp-gap-status.open{background:#fff7ed;color:#c2410c;border:0.5px solid #fdba74;}
 .odp-gap-status.resolved{background:#dcfce7;color:#15803d;}
@@ -627,7 +678,7 @@ const ODP_CSS = `
 .odp-approved-pill{display:inline-flex;padding:2px 9px;border-radius:6px;font-size:10px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;background:#dcfce7;color:#15803d;}
 .odp-reply-subject-label{font-size:9px;font-weight:700;letter-spacing:.10em;text-transform:uppercase;color:var(--ink5);margin-bottom:5px;}
 .odp-reply-subject{font-size:13.5px;font-weight:700;color:var(--ink);margin-bottom:12px;padding-bottom:12px;border-bottom:0.5px solid var(--brd);}
-.odp-reply-body{font-size:13px;color:var(--ink2);line-height:1.72;padding-bottom:14px;border-bottom:0.5px solid var(--brd);margin-bottom:14px;white-space:pre-wrap;}
+.odp-reply-body{font-size:13px;color:var(--ink2);line-height:1.9;padding-bottom:14px;border-bottom:0.5px solid var(--brd);margin-bottom:14px;}
 .odp-validation-card{background:var(--bg2,#f8fafc);border:0.5px solid var(--brd);border-radius:10px;padding:14px 16px;}
 .odp-validation-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;}
 .odp-validation-title{font-size:13px;font-weight:700;color:var(--ink);display:flex;align-items:center;gap:8px;}
@@ -636,7 +687,7 @@ const ODP_CSS = `
 .odp-validation-row:last-child{border-bottom:none;}
 .odp-validation-sub{font-size:11px;color:var(--ink5);margin-top:2px;}
 
-/* ── Evidence ── */
+/* Evidence */
 .odp-ev-wrap{border:0.5px solid var(--brd);border-radius:10px;overflow:hidden;background:var(--bg,#fff);margin-bottom:14px;}
 .odp-ev-header{display:flex;align-items:center;justify-content:space-between;padding:13px 16px;border-bottom:0.5px solid var(--brd);}
 .odp-ev-title{display:flex;align-items:center;gap:8px;font-size:14px;font-weight:700;color:var(--ink);}
@@ -669,7 +720,7 @@ const ODP_CSS = `
 .odp-ha-placeholder{display:flex;align-items:center;justify-content:center;height:38px;border:1.5px dashed var(--brd2);border-radius:8px;font-size:12px;color:var(--ink4);cursor:pointer;gap:5px;background:transparent;width:100%;margin-top:8px;transition:border-color .12s,color .12s;}
 .odp-ha-placeholder:hover{border-color:var(--p,#4B48C8);color:var(--p,#4B48C8);}
 
-/* ── Stakeholders ── */
+/* Stakeholders */
 .odp-sh-wrap{background:var(--bg,#fff);border:0.5px solid var(--brd);border-radius:10px;overflow:hidden;}
 .odp-sh-header{display:flex;align-items:center;justify-content:space-between;padding:13px 16px;border-bottom:0.5px solid var(--brd);}
 .odp-sh-title{font-size:14px;font-weight:700;color:var(--ink);display:flex;align-items:center;gap:8px;}
@@ -700,13 +751,12 @@ const ODP_CSS = `
 .odp-sh-attr-val.email-val{font-size:11px;text-transform:none;font-family:"DM Mono",monospace;color:var(--ink3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
 .odp-sh-empty{padding:36px 16px;text-align:center;color:var(--ink5);font-size:13px;}
 
-/* ── Activity feed ── */
+/* Activity feed */
 .odp-act-wrap{background:var(--bg,#fff);border:0.5px solid var(--brd);border-radius:10px;overflow:hidden;margin-bottom:14px;}
 .odp-act-header{display:flex;align-items:center;justify-content:space-between;padding:13px 16px;border-bottom:0.5px solid var(--brd);background:var(--bg2);}
 .odp-act-title{font-size:14px;font-weight:700;color:var(--ink);display:flex;align-items:center;gap:8px;}
 .odp-act-count{display:inline-flex;padding:2px 9px;border-radius:20px;font-size:10.5px;font-weight:600;color:var(--ink4);background:var(--bg3);border:0.5px solid var(--brd2);}
 
-/* timeline spine */
 .odp-feed{padding:8px 0;}
 .odp-tl-item{
   display:flex;align-items:flex-start;gap:12px;
@@ -752,7 +802,6 @@ const ODP_CSS = `
 .odp-tl-chip.sev-medium{background:rgba(194,65,12,0.07);border-color:rgba(194,65,12,0.18);color:#c2410c;}
 .odp-act-empty{padding:40px 16px;text-align:center;color:var(--ink5);font-size:13px;}
 
-/* legacy delta rows */
 .odp-delta-row{display:flex;align-items:center;gap:10px;padding:8px 16px;border-bottom:0.5px solid var(--brd);}
 .odp-delta-row:last-child{border-bottom:none;}
 .odp-delta-pill{display:inline-flex;padding:2px 8px;border-radius:20px;font-size:10.5px;font-weight:700;flex-shrink:0;}
@@ -762,8 +811,15 @@ const ODP_CSS = `
 .odp-delta-type{font-family:"DM Mono",monospace;font-size:11px;color:var(--ink4);flex:1;}
 .odp-delta-time{font-size:10.5px;color:var(--ink5);flex-shrink:0;}
 
-/* Error / loading */
 .odp-error{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:12px;flex:1;padding:28px;text-align:center;color:var(--ink4);}
+
+/* Reply body edit */
+.odp-reply-edit-btn{display:inline-flex;align-items:center;gap:4px;font-size:11px;font-weight:600;color:var(--ink4);background:none;border:0.5px solid var(--brd2);border-radius:6px;padding:3px 9px;cursor:pointer;transition:color .12s,border-color .12s;}
+.odp-reply-edit-btn:hover{color:#4B48C8;border-color:#4B48C8;}
+.odp-reply-edit-btn.cancel{color:#b91c1c;border-color:#fca5a5;}
+.odp-reply-edit-btn.cancel:hover{border-color:#b91c1c;}
+.odp-reply-textarea{width:100%;min-height:140px;resize:vertical;border:1px solid #4B48C8;border-radius:8px;padding:12px 14px;font-size:13px;color:var(--ink2);line-height:1.72;font-family:inherit;background:var(--bg);outline:none;box-shadow:0 0 0 3px rgba(75,72,200,.10);transition:border-color .15s,box-shadow .15s;margin-bottom:10px;box-sizing:border-box;}
+.odp-reply-textarea:focus{border-color:#4B48C8;box-shadow:0 0 0 3px rgba(75,72,200,.15);}
 `;
 
 // ─── Sub-components ───────────────────────────────────────────────────────────
@@ -792,52 +848,6 @@ const ForceBar: React.FC<{
     </div>
   </div>
 );
-
-const Stepper: React.FC<{ currentStage: string }> = ({ currentStage }) => {
-  const idx = Math.max(
-    0,
-    PIPELINE_STAGES.findIndex((s) =>
-      currentStage?.toLowerCase().includes(s.id),
-    ),
-  );
-  return (
-    <div className="odp-stepper">
-      {PIPELINE_STAGES.map((st, i) => {
-        const done = i < idx,
-          active = i === idx;
-        return (
-          <React.Fragment key={st.id}>
-            <div className="odp-step">
-              <div
-                className={`odp-step-circle${active ? " active" : done ? " done" : ""}`}
-              >
-                {done ? (
-                  <svg width="10" height="10" viewBox="0 0 12 12" fill="none">
-                    <path
-                      d="M2 6l3 3 5-5"
-                      stroke="currentColor"
-                      strokeWidth="1.8"
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                    />
-                  </svg>
-                ) : (
-                  i + 1
-                )}
-              </div>
-              <span className={`odp-step-label${active ? " active" : ""}`}>
-                {st.label}
-              </span>
-            </div>
-            {i < PIPELINE_STAGES.length - 1 && (
-              <div className={`odp-step-line${done ? " done" : ""}`} />
-            )}
-          </React.Fragment>
-        );
-      })}
-    </div>
-  );
-};
 
 const CheckCircle: React.FC<{ color?: string }> = ({ color = "#16a34a" }) => (
   <svg
@@ -894,7 +904,6 @@ const LoadingSkeleton: React.FC = () => (
   </div>
 );
 
-// Activity icon mapper
 function tlIcon(eventType?: string): { cls: string; icon: string } {
   const t = (eventType ?? "").toLowerCase();
   if (t === "workspace_created" || t.includes("workspace_open"))
@@ -939,6 +948,12 @@ const OpportunityDetailPanel: React.FC<Props> = ({
   const [profile, setProfile] = React.useState<OpportunityProfile | null>(null);
   const [loading, setLoading] = React.useState(true);
   const [error, setError] = React.useState<string | null>(null);
+  const [isEditingBody, setIsEditingBody] = React.useState(false);
+  const [editedBody, setEditedBody] = React.useState<string>("");
+  // ── Send email state ──────────────────────────────────────────────────────
+  const [isSending, setIsSending] = React.useState(false);
+  const [sendError, setSendError] = React.useState<string | null>(null);
+  const [sendSuccess, setSendSuccess] = React.useState(false);
 
   React.useEffect(() => {
     let el = document.getElementById("odp-styles") as HTMLStyleElement | null;
@@ -963,10 +978,6 @@ const OpportunityDetailPanel: React.FC<Props> = ({
         return r.json();
       })
       .then((data: any) => {
-        console.log("[ODP] profile keys:", Object.keys(data));
-        console.log("[ODP] primaryContact raw:", data.primaryContact);
-        console.log("[ODP] contacts raw:", data.contacts);
-        console.log("[ODP] stakeholders raw:", data.stakeholders);
         setProfile(data as OpportunityProfile);
       })
       .catch((err: Error) => setError(err.message))
@@ -977,7 +988,6 @@ const OpportunityDetailPanel: React.FC<Props> = ({
     fetchProfile();
   }, [fetchProfile]);
 
-  // ── Resolve top-level keys ─────────────────────────────────────────────────
   const ws = profile?.opportunity ?? profile?.workspace ?? null;
   const account = profile?.account ?? null;
 
@@ -1106,6 +1116,30 @@ const OpportunityDetailPanel: React.FC<Props> = ({
     return 0;
   };
 
+  // ── Send email handler ────────────────────────────────────────────────────
+  const handleSendEmail = React.useCallback(() => {
+    if (!replyDraft?.rowKey) return;
+    const body = editedBody || replyDraft.body;
+    setIsSending(true);
+    setSendError(null);
+    setSendSuccess(false);
+    apiFetch(
+      `${baseUrl()}/communication/reply-drafts/${replyDraft.rowKey}/send?workspaceId=${opp.id}`,
+      {
+        method: "POST",
+        headers: authHeaders(),
+        body: JSON.stringify({ body, sentBy: "user" }),
+      },
+    )
+      .then((r: any) => {
+        if (!r.ok) throw new Error(`HTTP ${r.status}`);
+        setSendSuccess(true);
+        setIsEditingBody(false);
+      })
+      .catch((err: Error) => setSendError(err.message))
+      .finally(() => setIsSending(false));
+  }, [replyDraft, editedBody]);
+
   return (
     <>
       <div className="odp-backdrop" onClick={onClose} />
@@ -1113,7 +1147,7 @@ const OpportunityDetailPanel: React.FC<Props> = ({
         className="odp-panel"
         style={{ width: panelWidth, minWidth: 320, maxWidth: "90%" }}
       >
-        {/* ── Resize handle — visually obvious grip ── */}
+        {/* Resize handle */}
         <div className="odp-resize" onMouseDown={onResizeStart}>
           <div className="odp-resize-grip">
             <div className="odp-resize-dot" />
@@ -1123,7 +1157,7 @@ const OpportunityDetailPanel: React.FC<Props> = ({
           <span className="odp-resize-hint">Drag to resize</span>
         </div>
 
-        {/* ── Header (no separate topbar — close + act live here) ── */}
+        {/* Header */}
         <div className="odp-hdr">
           <div className="odp-hdr-top">
             <div className={"odp-av " + avBg(displayName)}>
@@ -1143,67 +1177,49 @@ const OpportunityDetailPanel: React.FC<Props> = ({
             </div>
           </div>
 
+          {/* ── Enhanced stat cards ── */}
           <div className="odp-stats">
-            <div className="odp-stat">
-              <div className="odp-stat-l">Value</div>
+            <div className="odp-stat accent-value">
+              <div className="odp-stat-l">Deal value</div>
               <div className="odp-stat-v">
                 {displayValue && displayValue > 0 ? fmt$(displayValue) : "—"}
               </div>
             </div>
-            <div className="odp-stat">
+            <div className="odp-stat accent-score">
               <div className="odp-stat-l">Panchashakti</div>
-              <div className="odp-stat-v pscore">{pScore}/100</div>
+              <div className="odp-stat-v pscore">
+                {pScore}
+                <span
+                  style={{
+                    fontSize: 10,
+                    fontWeight: 500,
+                    color: "var(--ink5)",
+                    fontFamily: '"DM Mono",monospace',
+                    letterSpacing: 0,
+                  }}
+                >
+                  /100
+                </span>
+              </div>
             </div>
-            <div className="odp-stat">
-              <div className="odp-stat-l">Stage Days</div>
+            <div className="odp-stat accent-days">
+              <div className="odp-stat-l">Stage days</div>
               <div className="odp-stat-v">
                 {opp.cycle > 0 ? `${opp.cycle}d` : "—"}
               </div>
             </div>
-            <div className="odp-stat">
-              <div className="odp-stat-l">Heat</div>
-              <div className={`odp-stat-v heat-${opp.heat}`}>{heatLabel}</div>
+            <div className="odp-stat accent-phase">
+              <div className="odp-stat-l">Phase</div>
+              <div style={{ marginTop: 2 }}>
+                <span className="odp-stat-phase-pill">
+                  {displayStage || "—"}
+                </span>
+              </div>
             </div>
           </div>
         </div>
 
-        {/* Stepper */}
-        <Stepper currentStage={displayStage} />
-
-        {/* Warning */}
-        {openGaps.length > 0 && (
-          <div className="odp-warn">
-            <span className="odp-warn-ic">
-              <svg width="14" height="14" viewBox="0 0 16 16" fill="none">
-                <path
-                  d="M8 1.5L14.5 13.5H1.5L8 1.5z"
-                  stroke="currentColor"
-                  strokeWidth="1.4"
-                  strokeLinejoin="round"
-                />
-                <path
-                  d="M8 6.5v3M8 11.5v.5"
-                  stroke="currentColor"
-                  strokeWidth="1.3"
-                  strokeLinecap="round"
-                />
-              </svg>
-            </span>
-            <span className="odp-warn-txt">
-              {criticalGaps.length > 0
-                ? `Not ready to advance — ${criticalGaps.length} critical gap${criticalGaps.length > 1 ? "s" : ""} unresolved`
-                : `${openGaps.length} open gap${openGaps.length > 1 ? "s" : ""} require attention`}
-            </span>
-            <button
-              className="odp-warn-btn"
-              onClick={() => setActiveTab("gaps")}
-            >
-              View gaps
-            </button>
-          </div>
-        )}
-
-        {/* Tabs */}
+        {/* ── Enhanced tabs ── */}
         <div className="odp-tabs" role="tablist">
           {TABS.map((t) => {
             const badge = tabBadge(t.id);
@@ -1226,7 +1242,7 @@ const OpportunityDetailPanel: React.FC<Props> = ({
           })}
         </div>
 
-        {/* Body — flex:1, overflow-y:auto, no page-level scroll */}
+        {/* Body */}
         <div className="odp-body">
           {loading && <LoadingSkeleton />}
 
@@ -1250,7 +1266,6 @@ const OpportunityDetailPanel: React.FC<Props> = ({
               {/* ══ OVERVIEW ══ */}
               {activeTab === "overview" && (
                 <>
-                  {/* Panchashakti hero row */}
                   <div className="odp-ov-score-ring">
                     <div>
                       <div className="odp-ov-ring-num">{pScore}</div>
@@ -1318,7 +1333,6 @@ const OpportunityDetailPanel: React.FC<Props> = ({
                     </div>
                   </div>
 
-                  {/* Quick KV strip */}
                   <div className="odp-ov-kv-row">
                     <div className="odp-ov-kv">
                       <div className="odp-ov-kv-l">Value</div>
@@ -1353,7 +1367,6 @@ const OpportunityDetailPanel: React.FC<Props> = ({
                     </div>
                   </div>
 
-                  {/* Five Forces */}
                   <div className="odp-sh">Five Forces</div>
                   <div className="odp-card" style={{ padding: "12px 16px" }}>
                     <ForceBar
@@ -1393,7 +1406,6 @@ const OpportunityDetailPanel: React.FC<Props> = ({
                     />
                   </div>
 
-                  {/* Signals */}
                   <div className="odp-card" style={{ marginTop: 12 }}>
                     <div className="odp-sh" style={{ marginBottom: 10 }}>
                       Engagement Signals (14d)
@@ -1420,7 +1432,6 @@ const OpportunityDetailPanel: React.FC<Props> = ({
                       marginBottom: 12,
                     }}
                   >
-                    {/* header */}
                     <div
                       style={{
                         padding: "13px 16px",
@@ -1505,7 +1516,6 @@ const OpportunityDetailPanel: React.FC<Props> = ({
                       </div>
                     </div>
 
-                    {/* card list */}
                     <div className="odp-inf-list">
                       {inferences.map((inf) => {
                         const statusCls = inf.status.toLowerCase();
@@ -1911,10 +1921,107 @@ const OpportunityDetailPanel: React.FC<Props> = ({
                       <div className="odp-reply-subject">
                         {replyDraft.subject}
                       </div>
-                      <div className="odp-reply-body">{replyDraft.body}</div>
-                      <div style={{ display: "flex", gap: 8 }}>
-                        <button className="btn sm pri">
-                          <Icon name="mail" size={12} /> Send email
+
+                      {/* ── Reply body: read or edit ── */}
+                      <div style={{ marginBottom: 14 }}>
+                        <div
+                          style={{
+                            display: "flex",
+                            alignItems: "center",
+                            justifyContent: "space-between",
+                            marginBottom: 8,
+                          }}
+                        >
+                          <span
+                            style={{
+                              fontSize: 9,
+                              fontWeight: 700,
+                              letterSpacing: ".10em",
+                              textTransform: "uppercase" as const,
+                              color: "var(--ink5)",
+                            }}
+                          >
+                            Body
+                          </span>
+                          {isEditingBody ? (
+                            <button
+                              className="odp-reply-edit-btn cancel"
+                              onClick={() => {
+                                setIsEditingBody(false);
+                                setEditedBody(replyDraft.body);
+                              }}
+                            >
+                              <Icon name="x" size={11} /> Cancel
+                            </button>
+                          ) : (
+                            <button
+                              className="odp-reply-edit-btn"
+                              onClick={() => {
+                                setEditedBody(bodyToEditText(replyDraft.body));
+                                setIsEditingBody(true);
+                                // Reset send state when starting a new edit
+                                setSendSuccess(false);
+                                setSendError(null);
+                              }}
+                            >
+                              <Icon name="edit-2" size={11} /> Edit
+                            </button>
+                          )}
+                        </div>
+
+                        {isEditingBody ? (
+                          <textarea
+                            className="odp-reply-textarea"
+                            value={editedBody}
+                            onChange={(e) => setEditedBody(e.target.value)}
+                            autoFocus
+                          />
+                        ) : (
+                          <div
+                            className="odp-reply-body"
+                            style={{
+                              borderBottom: "none",
+                              marginBottom: 0,
+                              paddingBottom: 0,
+                            }}
+                          >
+                            {formatReplyBody(editedBody || replyDraft.body)}
+                          </div>
+                        )}
+                      </div>
+
+                      {/* ── Action buttons ── */}
+                      <div
+                        style={{
+                          borderTop: "0.5px solid var(--brd)",
+                          paddingTop: 14,
+                          display: "flex",
+                          gap: 8,
+                          flexWrap: "wrap",
+                          alignItems: "center",
+                        }}
+                      >
+                        <button
+                          className="btn sm pri"
+                          onClick={handleSendEmail}
+                          disabled={isSending || sendSuccess}
+                          style={{
+                            opacity: isSending ? 0.7 : 1,
+                            cursor:
+                              isSending || sendSuccess
+                                ? "not-allowed"
+                                : "pointer",
+                          }}
+                        >
+                          <Icon
+                            name={sendSuccess ? "check" : "mail"}
+                            size={12}
+                          />
+                          {isSending
+                            ? "Sending…"
+                            : sendSuccess
+                              ? "Sent!"
+                              : "Send email"}
                         </button>
                         <button className="btn sm">
                           <Icon name="copy" size={12} /> Copy
@@ -1923,6 +2030,46 @@ const OpportunityDetailPanel: React.FC<Props> = ({
                           <Icon name="refresh-cw" size={12} /> Regenerate
                         </button>
                       </div>
+
+                      {/* ── Send feedback ── */}
+                      {sendError && (
+                        <div
+                          style={{
+                            marginTop: 10,
+                            padding: "8px 11px",
+                            background: "#fef2f2",
+                            border: "0.5px solid #fca5a5",
+                            borderRadius: 7,
+                            fontSize: 11.5,
+                            color: "#b91c1c",
+                            display: "flex",
+                            alignItems: "center",
+                            gap: 6,
+                          }}
+                        >
+                          <Icon name="alert-circle" size={12} />
+                          Failed to send: {sendError}
+                        </div>
+                      )}
+                      {sendSuccess && (
+                        <div
+                          style={{
+                            marginTop: 10,
+                            padding: "8px 11px",
+                            background: "#f0fdf4",
+                            border: "0.5px solid #86efac",
+                            borderRadius: 7,
+                            fontSize: 11.5,
+                            color: "#15803d",
+                            display: "flex",
+                            alignItems: "center",
+                            gap: 6,
+                          }}
+                        >
+                          <Icon name="check-circle" size={12} />
+                          Email sent successfully.
+                        </div>
+                      )}
                     </div>
                   ) : (
                     <div
@@ -2065,7 +2212,6 @@ const OpportunityDetailPanel: React.FC<Props> = ({
                     )}
                   </div>
 
-                  {/* Human assertions */}
                   <div className="odp-ha-wrap">
                     <div className="odp-ha-header">
                       <span className="odp-ha-title">Human Assertions</span>
@@ -2272,39 +2418,6 @@ const OpportunityDetailPanel: React.FC<Props> = ({
                       <span style={{ fontSize: 11 }}>
                         Add contacts involved in this opportunity.
                       </span>
-                      {profile && (
-                        <div
-                          style={{
-                            marginTop: 14,
-                            textAlign: "left",
-                            padding: "10px 14px",
-                            background: "var(--bg3)",
-                            borderRadius: 8,
-                            fontSize: 10,
-                            fontFamily: '"DM Mono",monospace',
-                            color: "var(--ink4)",
-                            lineHeight: 1.65,
-                          }}
-                        >
-                          <div style={{ fontWeight: 700, marginBottom: 5 }}>
-                            Debug — profile keys:
-                          </div>
-                          {Object.keys(profile as any).map((k) => (
-                            <div key={k}>
-                              <span style={{ color: "var(--p)" }}>{k}</span>
-                              {": "}
-                              <span style={{ color: "var(--ink5)" }}>
-                                {Array.isArray((profile as any)[k])
-                                  ? `Array(${(profile as any)[k].length})`
-                                  : typeof (profile as any)[k] === "object" &&
-                                      (profile as any)[k]
-                                    ? "Object"
-                                    : String((profile as any)[k] ?? "null")}
-                              </span>
-                            </div>
-                          ))}
-                        </div>
-                      )}
                     </div>
                   )}
                 </div>
@@ -2404,7 +2517,6 @@ const OpportunityDetailPanel: React.FC<Props> = ({
                       })}
                     </div>
                   ) : (
-                    /* Fallback: synthesise timeline from profile data */
                     <div className="odp-feed">
                       {replyDraft &&
                         (() => {
