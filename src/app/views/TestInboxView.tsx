@@ -73,7 +73,7 @@ async function inboxFetch<T>(
 // ── Types ─────────────────────────────────────────────────────────────────────
 
 type MessageSide = "org" | "cust";
-type NavFolder = "inbox" | "sent" | "calendar";
+type NavFolder = "inbox" | "sent" | "calendar" | "chat";
 type PortalView = "org" | "cust";
 
 interface Tag {
@@ -90,9 +90,13 @@ interface CalEvent {
   title: string;
   date: string;
   time: string;
+  startTime: string;
+  endTime: string;
   attendees: string;
+  organizer: string;
   account: string;
   status: "pending" | "confirmed" | "proposed" | "declined" | "cancelled";
+  createdBy: string;
   week: "this" | "next" | "future";
 }
 interface Message {
@@ -138,13 +142,25 @@ interface MailMessageOut {
   created_at: string;
 }
 interface CalEventOut {
-  event_id: string;
+  id?: string;
+  event_id?: string;
+  eventId?: string;
   title: string;
   date: string;
   time: string;
-  attendee_emails: string;
-  account_id: string | null;
+  startTime?: string;
+  start_time?: string;
+  endTime?: string;
+  end_time?: string;
+  attendeeEmails?: string;
+  attendee_emails?: string;
+  organizerEmail?: string;
+  organizer_email?: string;
+  account_id?: string | null;
+  accountId?: string | null;
   status: "pending" | "confirmed" | "proposed" | "declined" | "cancelled";
+  createdBy?: string;
+  created_by?: string;
   week: "this" | "next" | "future";
 }
 
@@ -284,13 +300,17 @@ function adaptToMessage(m: MailMessageOut): Message {
 
 function adaptCalEvent(e: CalEventOut): CalEvent {
   return {
-    id: e.event_id,
+    id: e.id ?? e.event_id ?? e.eventId ?? `${e.title}-${e.date}-${e.time}`,
     title: e.title,
     date: e.date,
     time: e.time,
-    attendees: e.attendee_emails || "",
-    account: e.account_id ?? "",
+    startTime: e.startTime ?? e.start_time ?? "",
+    endTime: e.endTime ?? e.end_time ?? "",
+    attendees: e.attendeeEmails ?? e.attendee_emails ?? "",
+    organizer: e.organizerEmail ?? e.organizer_email ?? "",
+    account: e.account_id ?? e.accountId ?? "",
     status: e.status,
+    createdBy: e.createdBy ?? e.created_by ?? "",
     week: e.week,
   };
 }
@@ -321,7 +341,8 @@ const Av: React.FC<{
   color: string;
   size?: number;
   ring?: boolean;
-}> = ({ initials, color, size = 34, ring = false }) => (
+  src?: string;
+}> = ({ initials, color, size = 34, ring = false, src }) => (
   <div
     style={{
       width: size,
@@ -338,9 +359,18 @@ const Av: React.FC<{
       letterSpacing: ".02em",
       boxShadow: ring ? `0 0 0 2.5px ${C.bg2}, 0 0 0 4px ${color}` : "none",
       transition: "box-shadow .15s",
+      overflow: "hidden",
     }}
   >
-    {initials}
+    {src ? (
+      <img
+        src={src}
+        alt={initials}
+        style={{ width: "100%", height: "100%", objectFit: "cover" }}
+      />
+    ) : (
+      initials
+    )}
   </div>
 );
 
@@ -844,7 +874,7 @@ const ComposeModal: React.FC<{
       await inboxFetch("/test/mailbox/messages", undefined, {
         method: "POST",
         body: JSON.stringify({
-          direction: "inbound",
+          direction: "outbound",
           fromEmail: fromTrimmed,
           fromName: name.trim() || fromTrimmed, // ← use name if provided, fall back to email
           toEmails: "info@zotra.com",
@@ -1031,10 +1061,436 @@ const ComposeModal: React.FC<{
 
 // ── Calendar ──────────────────────────────────────────────────────────────────
 
-const CalendarView: React.FC<{ events: CalEvent[]; loading: boolean }> = ({
-  events,
-  loading,
-}) => {
+// Deterministic avatar colour so the same attendee always renders the same
+// colour without needing a real people/profile API.
+const AV_PALETTE = [
+  "#4B48C8",
+  "#00C2A8",
+  "#DC2626",
+  "#2563EB",
+  "#B45309",
+  "#7C3AED",
+];
+function seededColor(seed: string): string {
+  let h = 0;
+  for (let i = 0; i < seed.length; i++) h = (h * 31 + seed.charCodeAt(i)) >>> 0;
+  return AV_PALETTE[h % AV_PALETTE.length];
+}
+// Organiser + attendees, deduped, so "who else can join" always has at
+// least the organiser to show — previously an event created without
+// filling the Attendees field rendered no participants at all.
+function combineParticipants(
+  organizer: string,
+  attendeesRaw: string,
+): { initials: string; color: string; email: string; label: string }[] {
+  const raw = [organizer, attendeesRaw].filter(Boolean).join(",");
+  const seen = new Set<string>();
+  return raw
+    .split(/[,;]/)
+    .map((s) => s.trim())
+    .filter((s) => s && !seen.has(s.toLowerCase()) && seen.add(s.toLowerCase()))
+    .slice(0, 5)
+    .map((entry) => {
+      const nameGuess = entry.split("@")[0].replace(/[._]/g, " ");
+      const parts = nameGuess.trim().split(/\s+/);
+      const initials = (parts[0]?.[0] ?? "?") + (parts[1]?.[0] ?? "");
+      const label = nameGuess.replace(/\b\w/g, (c) => c.toUpperCase());
+      return {
+        initials: initials.toUpperCase(),
+        color: seededColor(entry),
+        email: entry,
+        label,
+      };
+    });
+}
+
+// Placeholder meeting link, deterministic per event so it stays stable
+// across reloads. Swap for a real video-provider link once one's wired up.
+function meetingLinkFor(id: string): string {
+  const slug = id.replace(/[^a-zA-Z0-9]/g, "").slice(0, 10) || "demo";
+  return `https://meet.zotra.app/${slug}`;
+}
+
+// Buckets a date into the same "this / next / future" week vocabulary the
+// backend already uses, so a created event lands in the right section
+// without asking the tester to classify it by hand.
+function deriveWeek(dateStr: string): "this" | "next" | "future" {
+  const d = new Date(dateStr);
+  if (isNaN(d.getTime())) return "this";
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const diffDays = Math.round((d.getTime() - today.getTime()) / 86400000);
+  if (diffDays < 7) return "this";
+  if (diffDays < 14) return "next";
+  return "future";
+}
+
+function formatFriendlyTime(hhmm: string): string {
+  const [h, m] = hhmm.split(":").map(Number);
+  if (Number.isNaN(h)) return hhmm;
+  const period = h >= 12 ? "PM" : "AM";
+  const h12 = h % 12 === 0 ? 12 : h % 12;
+  return `${h12}:${String(m ?? 0).padStart(2, "0")} ${period}`;
+}
+
+const ORG_TEST_EMAIL = "team@zotra.com";
+const CUSTOMER_TEST_EMAIL = "info@zotra.com";
+
+// ── Create-event modal ───────────────────────────────────────────────────────
+// Mirrors ComposeModal's org/customer simulation pattern: which side you're
+// viewing from decides who organises vs who's invited, same as how Compose
+// only simulates an inbound customer message. Both directions are useful
+// here (either side can schedule a meeting), so the button stays visible
+// for both — only the defaults + copy adapt to the active portal.
+
+const CreateEventModal: React.FC<{
+  view: PortalView;
+  onClose: () => void;
+  onCreated: () => void;
+  onToast: (m: string) => void;
+}> = ({ view, onClose, onCreated, onToast }) => {
+  const [title, setTitle] = useState("");
+  const [date, setDate] = useState(() => new Date().toISOString().slice(0, 10));
+  const [time, setTime] = useState("10:00");
+  const [duration, setDuration] = useState(30);
+  const [organizerEmail, setOrganizerEmail] = useState(
+    view === "org" ? ORG_TEST_EMAIL : "",
+  );
+  const [attendeeEmails, setAttendeeEmails] = useState(
+    view === "org" ? "" : CUSTOMER_TEST_EMAIL,
+  );
+  const [status, setStatus] = useState<CalEvent["status"]>("pending");
+  const [saving, setSaving] = useState(false);
+
+  const create = async () => {
+    const titleTrimmed = title.trim();
+    const organizerTrimmed = organizerEmail.trim();
+    if (!titleTrimmed || !date || !time || !organizerTrimmed) {
+      onToast("Fill in Title, Date, Time and Organiser");
+      return;
+    }
+    setSaving(true);
+    try {
+      const startTime = new Date(`${date}T${time}:00`);
+      const endTime = new Date(startTime.getTime() + duration * 60000);
+      await inboxFetch("/test/calendar/events", undefined, {
+        method: "POST",
+        body: JSON.stringify({
+          title: titleTrimmed,
+          date,
+          time: formatFriendlyTime(time),
+          startTime: startTime.toISOString(),
+          endTime: endTime.toISOString(),
+          attendeeEmails: attendeeEmails.trim(),
+          organizerEmail: organizerTrimmed,
+          status,
+          createdBy: "tester",
+          week: deriveWeek(date),
+        }),
+      });
+      onToast("Event created");
+      onCreated();
+      onClose();
+    } catch (err: any) {
+      onToast(err?.message ?? "Failed to create event");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div
+      onClick={(e) => e.target === e.currentTarget && onClose()}
+      style={{
+        position: "fixed",
+        inset: 0,
+        background: "rgba(10,10,20,.45)",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        zIndex: 1000,
+        backdropFilter: "blur(6px)",
+      }}
+    >
+      <div
+        style={{
+          background: C.bg2,
+          borderRadius: 18,
+          boxShadow: "0 24px 64px rgba(0,0,0,.22), 0 0 0 1px rgba(0,0,0,.05)",
+          width: 560,
+          maxWidth: "94vw",
+          overflow: "hidden",
+          animation: "ti-rise .2s cubic-bezier(.16,1,.3,1)",
+        }}
+      >
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+            padding: "16px 22px",
+            borderBottom: `1px solid ${C.brd}`,
+            background: `linear-gradient(to bottom, ${C.pSoft}, ${C.bg2})`,
+          }}
+        >
+          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+            <div
+              style={{
+                width: 32,
+                height: 32,
+                borderRadius: 9,
+                background: C.pGrad,
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+              }}
+            >
+              <svg
+                width="15"
+                height="15"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="white"
+                strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              >
+                <rect x="3" y="4" width="18" height="18" rx="2" />
+                <line x1="16" y1="2" x2="16" y2="6" />
+                <line x1="8" y1="2" x2="8" y2="6" />
+                <line x1="3" y1="10" x2="21" y2="10" />
+              </svg>
+            </div>
+            <div>
+              <div style={{ fontSize: 14, fontWeight: 800, color: C.ink }}>
+                New event
+              </div>
+              <div style={{ fontSize: 11, color: C.pDark, fontWeight: 600 }}>
+                {view === "org"
+                  ? "Scheduling as your organisation"
+                  : "Simulating a customer meeting request"}
+              </div>
+            </div>
+          </div>
+          <button onClick={onClose} className="ti-close-btn">
+            ✕
+          </button>
+        </div>
+
+        <FieldRow
+          label="Title"
+          value={title}
+          onChange={setTitle}
+          placeholder="Meeting title…"
+        />
+
+        <div style={{ display: "flex", borderBottom: `1px solid ${C.brd}` }}>
+          <div style={{ flex: 1, borderRight: `1px solid ${C.brd}` }}>
+            <div
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: 12,
+                padding: "11px 22px",
+              }}
+            >
+              <label
+                style={{
+                  fontSize: 11,
+                  fontWeight: 700,
+                  color: C.ink4,
+                  minWidth: 40,
+                  textTransform: "uppercase",
+                  letterSpacing: ".05em",
+                }}
+              >
+                Date
+              </label>
+              <input
+                type="date"
+                value={date}
+                onChange={(e) => setDate(e.target.value)}
+                style={{
+                  flex: 1,
+                  border: "none",
+                  outline: "none",
+                  fontSize: 13.5,
+                  fontFamily: "inherit",
+                  color: C.ink,
+                  background: "transparent",
+                }}
+              />
+            </div>
+          </div>
+          <div style={{ flex: 1 }}>
+            <div
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: 12,
+                padding: "11px 22px",
+              }}
+            >
+              <label
+                style={{
+                  fontSize: 11,
+                  fontWeight: 700,
+                  color: C.ink4,
+                  minWidth: 40,
+                  textTransform: "uppercase",
+                  letterSpacing: ".05em",
+                }}
+              >
+                Time
+              </label>
+              <input
+                type="time"
+                value={time}
+                onChange={(e) => setTime(e.target.value)}
+                style={{
+                  flex: 1,
+                  border: "none",
+                  outline: "none",
+                  fontSize: 13.5,
+                  fontFamily: "inherit",
+                  color: C.ink,
+                  background: "transparent",
+                }}
+              />
+            </div>
+          </div>
+        </div>
+
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: 12,
+            padding: "11px 22px",
+            borderBottom: `1px solid ${C.brd}`,
+          }}
+        >
+          <label
+            style={{
+              fontSize: 11,
+              fontWeight: 700,
+              color: C.ink4,
+              minWidth: 56,
+              textTransform: "uppercase",
+              letterSpacing: ".05em",
+            }}
+          >
+            Duration
+          </label>
+          <select
+            value={duration}
+            onChange={(e) => setDuration(Number(e.target.value))}
+            style={{
+              border: "none",
+              outline: "none",
+              fontSize: 13.5,
+              fontFamily: "inherit",
+              color: C.ink,
+              background: "transparent",
+            }}
+          >
+            <option value={15}>15 min</option>
+            <option value={30}>30 min</option>
+            <option value={45}>45 min</option>
+            <option value={60}>1 hr</option>
+          </select>
+        </div>
+
+        <FieldRow
+          label="Organiser"
+          value={organizerEmail}
+          onChange={setOrganizerEmail}
+          placeholder={
+            view === "org" ? "team@yourcompany.com" : "customer@company.com"
+          }
+          type="email"
+        />
+        <FieldRow
+          label="Attendees"
+          value={attendeeEmails}
+          onChange={setAttendeeEmails}
+          placeholder="comma-separated emails…"
+        />
+
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: 12,
+            padding: "11px 22px",
+          }}
+        >
+          <label
+            style={{
+              fontSize: 11,
+              fontWeight: 700,
+              color: C.ink4,
+              minWidth: 56,
+              textTransform: "uppercase",
+              letterSpacing: ".05em",
+            }}
+          >
+            Status
+          </label>
+          <select
+            value={status}
+            onChange={(e) => setStatus(e.target.value as CalEvent["status"])}
+            style={{
+              border: "none",
+              outline: "none",
+              fontSize: 13.5,
+              fontFamily: "inherit",
+              color: C.ink,
+              background: "transparent",
+            }}
+          >
+            <option value="pending">Pending</option>
+            <option value="confirmed">Confirmed</option>
+            <option value="proposed">Proposed</option>
+            <option value="declined">Declined</option>
+            <option value="cancelled">Cancelled</option>
+          </select>
+        </div>
+
+        <div
+          style={{
+            display: "flex",
+            gap: 8,
+            padding: "12px 22px 16px",
+            borderTop: `1px solid ${C.brd}`,
+            justifyContent: "flex-end",
+            background: C.bg,
+          }}
+        >
+          <button onClick={onClose} className="ti-btn-ghost">
+            Discard
+          </button>
+          <button
+            onClick={create}
+            disabled={saving}
+            className={saving ? "ti-btn-primary disabled" : "ti-btn-primary"}
+          >
+            {saving ? "Creating…" : "Create event"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+const CalendarView: React.FC<{
+  events: CalEvent[];
+  loading: boolean;
+  view: PortalView;
+  onRefresh: () => void;
+  onToast: (m: string) => void;
+}> = ({ events, loading, view, onRefresh, onToast }) => {
+  const [createOpen, setCreateOpen] = useState(false);
   const weeks: { label: string; key: CalEvent["week"] }[] = [
     { label: "This week", key: "this" },
     { label: "Next week", key: "next" },
@@ -1042,161 +1498,1602 @@ const CalendarView: React.FC<{ events: CalEvent[]; loading: boolean }> = ({
   ];
 
   return (
-    <div style={{ flex: 1, overflowY: "auto", padding: "28px 36px" }}>
-      <div style={{ maxWidth: 700 }}>
-        {weeks.map(({ label, key }) => {
-          const evs = events.filter((e) => e.week === key);
-          if (!loading && evs.length === 0 && key === "future") return null;
-          return (
-            <section key={key} style={{ marginBottom: 40 }}>
-              <div
-                style={{
-                  display: "flex",
-                  alignItems: "center",
-                  gap: 12,
-                  marginBottom: 16,
-                }}
-              >
-                <span
+    <div
+      style={{
+        flex: 1,
+        display: "flex",
+        flexDirection: "column",
+        overflow: "hidden",
+      }}
+    >
+      <div
+        style={{
+          padding: "14px 28px",
+          borderBottom: `1px solid ${C.brd}`,
+          background: C.bg2,
+          flexShrink: 0,
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-between",
+        }}
+      >
+        <div style={{ fontSize: 12.5, color: C.ink4 }}>
+          {loading
+            ? "Loading meetings…"
+            : `${events.length} meeting${events.length !== 1 ? "s" : ""} scheduled`}
+        </div>
+        <button onClick={() => setCreateOpen(true)} className="ti-btn-primary">
+          + New event
+        </button>
+      </div>
+
+      <div style={{ flex: 1, overflowY: "auto", padding: "24px 36px" }}>
+        <div style={{ maxWidth: 780 }}>
+          {weeks.map(({ label, key }) => {
+            const evs = events.filter((e) => e.week === key);
+            if (!loading && evs.length === 0 && key === "future") return null;
+            return (
+              <section key={key} style={{ marginBottom: 36 }}>
+                <div
                   style={{
-                    fontSize: 11,
-                    fontWeight: 800,
-                    textTransform: "uppercase",
-                    letterSpacing: ".09em",
-                    color: C.ink4,
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 12,
+                    marginBottom: 14,
                   }}
                 >
-                  {label}
-                </span>
-                {!loading && evs.length > 0 && (
                   <span
                     style={{
                       fontSize: 11,
-                      fontWeight: 700,
-                      padding: "1px 8px",
-                      borderRadius: 20,
-                      background: C.pSoft,
-                      color: C.p,
+                      fontWeight: 800,
+                      textTransform: "uppercase",
+                      letterSpacing: ".09em",
+                      color: C.ink4,
                     }}
                   >
-                    {evs.length}
+                    {label}
                   </span>
-                )}
-                <div style={{ flex: 1, height: 1, background: C.brd }} />
-              </div>
-
-              {loading ? (
-                [0, 1].map((i) => (
-                  <div
-                    key={i}
-                    style={{
-                      background: C.bg2,
-                      border: `1px solid ${C.brd}`,
-                      borderRadius: 12,
-                      padding: "16px 18px",
-                      marginBottom: 8,
-                      display: "flex",
-                      flexDirection: "column",
-                      gap: 8,
-                    }}
-                  >
-                    <div
+                  {!loading && evs.length > 0 && (
+                    <span
                       style={{
-                        display: "flex",
-                        justifyContent: "space-between",
+                        fontSize: 11,
+                        fontWeight: 700,
+                        padding: "1px 8px",
+                        borderRadius: 20,
+                        background: C.pSoft,
+                        color: C.p,
                       }}
                     >
-                      <Skel w="48%" h={13} d={i * 0.1} />
-                      <Skel w={72} h={22} r={20} d={i * 0.1 + 0.06} />
-                    </div>
-                    <div style={{ display: "flex", gap: 10 }}>
-                      <Skel w={80} h={10} d={i * 0.1 + 0.1} />
-                      <Skel w={130} h={10} d={i * 0.1 + 0.14} />
-                    </div>
-                  </div>
-                ))
-              ) : evs.length === 0 ? (
-                <p style={{ fontSize: 13, color: C.ink4, margin: "6px 0" }}>
-                  Nothing scheduled.
-                </p>
-              ) : (
-                evs.map((ev) => {
-                  const st = STATUS_MAP[ev.status] ?? STATUS_MAP.pending;
-                  return (
+                      {evs.length}
+                    </span>
+                  )}
+                  <div style={{ flex: 1, height: 1, background: C.brd }} />
+                </div>
+
+                {loading ? (
+                  [0, 1].map((i) => (
                     <div
-                      key={ev.id}
+                      key={i}
                       style={{
                         background: C.bg2,
                         border: `1px solid ${C.brd}`,
-                        borderLeft: `3px solid ${st.dot}`,
-                        borderRadius: "0 12px 12px 0",
-                        padding: "14px 18px",
-                        marginBottom: 8,
-                        opacity: ev.status === "cancelled" ? 0.5 : 1,
-                        transition: "box-shadow .12s",
+                        borderRadius: 12,
+                        padding: "16px 18px",
+                        marginBottom: 10,
+                        display: "flex",
+                        flexDirection: "column",
+                        gap: 8,
                       }}
                     >
                       <div
                         style={{
                           display: "flex",
                           justifyContent: "space-between",
-                          alignItems: "flex-start",
-                          gap: 10,
-                          marginBottom: 8,
+                        }}
+                      >
+                        <Skel w="48%" h={13} d={i * 0.1} />
+                        <Skel w={72} h={22} r={20} d={i * 0.1 + 0.06} />
+                      </div>
+                      <div style={{ display: "flex", gap: 10 }}>
+                        <Skel w={80} h={10} d={i * 0.1 + 0.1} />
+                        <Skel w={130} h={10} d={i * 0.1 + 0.14} />
+                      </div>
+                    </div>
+                  ))
+                ) : evs.length === 0 ? (
+                  <p style={{ fontSize: 13, color: C.ink4, margin: "6px 0" }}>
+                    Nothing scheduled.
+                  </p>
+                ) : (
+                  evs.map((ev) => {
+                    const st = STATUS_MAP[ev.status] ?? STATUS_MAP.pending;
+                    const attendees = combineParticipants(
+                      ev.organizer,
+                      ev.attendees,
+                    );
+                    const canJoin = ev.status !== "cancelled";
+                    const link = meetingLinkFor(ev.id);
+                    const copyLink = async () => {
+                      try {
+                        await navigator.clipboard.writeText(link);
+                        onToast("Meeting link copied");
+                      } catch {
+                        onToast(link);
+                      }
+                    };
+                    return (
+                      <div
+                        key={ev.id}
+                        className="ti-cal-card"
+                        style={{
+                          background: C.bg2,
+                          border: `1px solid ${C.brd}`,
+                          borderLeft: `3px solid ${st.dot}`,
+                          borderRadius: "0 12px 12px 0",
+                          padding: "14px 18px",
+                          marginBottom: 10,
+                          opacity: ev.status === "cancelled" ? 0.5 : 1,
+                          display: "flex",
+                          alignItems: "center",
+                          gap: 14,
+                        }}
+                      >
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                          <div
+                            style={{
+                              display: "flex",
+                              justifyContent: "space-between",
+                              alignItems: "flex-start",
+                              gap: 10,
+                              marginBottom: 8,
+                            }}
+                          >
+                            <span
+                              style={{
+                                fontSize: 14,
+                                fontWeight: 700,
+                                color: C.ink,
+                                letterSpacing: "-.1px",
+                              }}
+                            >
+                              {ev.title}
+                            </span>
+                            <Pill status={ev.status} />
+                          </div>
+                          <div
+                            style={{
+                              display: "flex",
+                              flexWrap: "wrap",
+                              gap: 14,
+                              alignItems: "center",
+                              marginBottom: attendees.length ? 6 : 0,
+                            }}
+                          >
+                            {ev.time && (
+                              <span
+                                style={{
+                                  fontSize: 12,
+                                  color: C.ink3,
+                                  fontFamily: "monospace",
+                                  display: "inline-flex",
+                                  alignItems: "center",
+                                  gap: 4,
+                                }}
+                              >
+                                <svg
+                                  width="12"
+                                  height="12"
+                                  viewBox="0 0 24 24"
+                                  fill="none"
+                                  stroke="currentColor"
+                                  strokeWidth="2"
+                                  strokeLinecap="round"
+                                  strokeLinejoin="round"
+                                >
+                                  <circle cx="12" cy="12" r="10" />
+                                  <polyline points="12 6 12 12 16 14" />
+                                </svg>
+                                {ev.time}
+                              </span>
+                            )}
+                            {ev.date && (
+                              <span
+                                style={{
+                                  fontSize: 12,
+                                  color: C.ink3,
+                                  fontFamily: "monospace",
+                                }}
+                              >
+                                {ev.date}
+                              </span>
+                            )}
+                          </div>
+                          {attendees.length > 0 && (
+                            <div
+                              style={{
+                                display: "flex",
+                                alignItems: "center",
+                                gap: 8,
+                              }}
+                            >
+                              <span
+                                style={{
+                                  display: "flex",
+                                  alignItems: "center",
+                                }}
+                              >
+                                {attendees.map((a, i) => (
+                                  <span
+                                    key={i}
+                                    style={{
+                                      marginLeft: i === 0 ? 0 : -6,
+                                      position: "relative",
+                                      zIndex: attendees.length - i,
+                                    }}
+                                    title={a.email}
+                                  >
+                                    <Av
+                                      initials={a.initials}
+                                      color={a.color}
+                                      size={22}
+                                      ring
+                                    />
+                                  </span>
+                                ))}
+                              </span>
+                              <span
+                                style={{
+                                  fontSize: 11.5,
+                                  color: C.ink4,
+                                  overflow: "hidden",
+                                  textOverflow: "ellipsis",
+                                  whiteSpace: "nowrap",
+                                }}
+                              >
+                                {attendees.map((a) => a.label).join(", ")}
+                              </span>
+                            </div>
+                          )}
+                        </div>
+                        {canJoin && (
+                          <div
+                            style={{
+                              display: "flex",
+                              alignItems: "center",
+                              gap: 6,
+                              flexShrink: 0,
+                            }}
+                          >
+                            <button
+                              onClick={copyLink}
+                              title="Copy meeting link"
+                              style={{
+                                width: 32,
+                                height: 32,
+                                borderRadius: 8,
+                                border: `1px solid ${C.brd}`,
+                                background: C.bg,
+                                color: C.ink3,
+                                display: "flex",
+                                alignItems: "center",
+                                justifyContent: "center",
+                                cursor: "pointer",
+                              }}
+                            >
+                              <svg
+                                width="14"
+                                height="14"
+                                viewBox="0 0 24 24"
+                                fill="none"
+                                stroke="currentColor"
+                                strokeWidth="2"
+                                strokeLinecap="round"
+                                strokeLinejoin="round"
+                              >
+                                <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71" />
+                                <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71" />
+                              </svg>
+                            </button>
+                            <button
+                              onClick={copyLink}
+                              className="ti-btn-primary"
+                              style={{ padding: "7px 14px", fontSize: 12 }}
+                            >
+                              <svg
+                                width="12"
+                                height="12"
+                                viewBox="0 0 24 24"
+                                fill="none"
+                                stroke="currentColor"
+                                strokeWidth="2"
+                                strokeLinecap="round"
+                                strokeLinejoin="round"
+                              >
+                                <path d="M23 7l-7 5 7 5V7z" />
+                                <rect
+                                  x="1"
+                                  y="5"
+                                  width="15"
+                                  height="14"
+                                  rx="2"
+                                />
+                              </svg>
+                              Join
+                            </button>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })
+                )}
+              </section>
+            );
+          })}
+          {!loading && events.length === 0 && (
+            <div style={{ padding: "40px 0", textAlign: "center" }}>
+              <p style={{ fontSize: 13, color: C.ink4, marginBottom: 10 }}>
+                No meetings yet — create one to see it appear here.
+              </p>
+            </div>
+          )}
+        </div>
+      </div>
+
+      {createOpen && (
+        <CreateEventModal
+          view={view}
+          onClose={() => setCreateOpen(false)}
+          onCreated={onRefresh}
+          onToast={onToast}
+        />
+      )}
+    </div>
+  );
+};
+
+// ── Chat (channels) ──────────────────────────────────────────────────────────
+// Wired to GET /team-chat/bootstrap for real channels/DMs/org members.
+// There's no messages-by-channel endpoint yet, so the thread pane still
+// composes locally (clearly not persisted) — swap that in once it exists.
+
+interface TeamChatMember {
+  userId: string;
+  fullName: string;
+  email: string;
+  avatar: string;
+}
+interface TeamChatChannel {
+  channelId: string;
+  name: string;
+  type: "channel" | "dm";
+  topic: string | null;
+  group: string | null;
+  visibility: string;
+  lastMessageAt: string | null;
+  lastMessagePreview: string;
+  unreadCount: number;
+}
+interface TeamChatBootstrap {
+  orgMembers: TeamChatMember[];
+  channels: TeamChatChannel[];
+  dms: TeamChatChannel[];
+}
+interface ChatMsg {
+  from: string;
+  initials: string;
+  color: string;
+  time: string;
+  text: string;
+}
+
+function relTime(iso: string | null): string {
+  if (!iso) return "";
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return "";
+  const diffMs = Date.now() - d.getTime();
+  const mins = Math.round(diffMs / 60000);
+  if (mins < 1) return "now";
+  if (mins < 60) return `${mins}m ago`;
+  const hrs = Math.round(mins / 60);
+  if (hrs < 24) return `${hrs}h ago`;
+  const days = Math.round(hrs / 24);
+  return `${days}d ago`;
+}
+
+function initialsFrom(name: string): string {
+  const parts = name.trim().split(/\s+/).filter(Boolean);
+  if (parts.length >= 2) return (parts[0][0] + parts[1][0]).toUpperCase();
+  const word = parts[0] ?? "?";
+  return (word.length >= 2 ? word.slice(0, 2) : word).toUpperCase();
+}
+
+function findMember(
+  name: string,
+  members: TeamChatMember[],
+): TeamChatMember | undefined {
+  return members.find((m) => m.fullName.toLowerCase() === name.toLowerCase());
+}
+
+// Most-recent-activity-first, same convention as every real chat client.
+// Items with no lastMessageAt (freshly created, never messaged) sink to
+// the bottom instead of jumbling the order.
+function sortByRecency<T extends { lastMessageAt: string | null }>(
+  items: T[],
+): T[] {
+  return [...items].sort((a, b) => {
+    const ta = a.lastMessageAt ? new Date(a.lastMessageAt).getTime() : -1;
+    const tb = b.lastMessageAt ? new Date(b.lastMessageAt).getTime() : -1;
+    return tb - ta;
+  });
+}
+
+const ChatView: React.FC<{
+  data: TeamChatBootstrap | null;
+  loading: boolean;
+  onRefresh: () => void;
+  onToast: (m: string) => void;
+}> = ({ data, loading, onRefresh, onToast }) => {
+  const [localChannels, setLocalChannels] = useState<TeamChatChannel[]>([]);
+  const [localDms, setLocalDms] = useState<TeamChatChannel[]>([]);
+  const [expanded, setExpanded] = useState<Record<string, boolean>>({});
+  const [activeChannel, setActiveChannel] = useState<string | null>(null);
+  const [draft, setDraft] = useState("");
+  const [thread, setThread] = useState<Record<string, ChatMsg[]>>({});
+  const [search, setSearch] = useState("");
+  const [membersOpen, setMembersOpen] = useState(false);
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const searchRef = useRef<HTMLInputElement>(null);
+
+  const rawChannels = [...(data?.channels ?? []), ...localChannels];
+  const rawDms = [...(data?.dms ?? []), ...localDms];
+  const channels = sortByRecency(rawChannels);
+  const dms = sortByRecency(rawDms);
+  const allChatItems = [...channels, ...dms];
+  const members = data?.orgMembers ?? [];
+
+  // Duplicate names happen in real data (two channels both called "Test"),
+  // so anything that collides gets a short id suffix to stay tellable
+  // apart instead of showing two identical, unclickable-looking rows.
+  const nameCounts = new Map<string, number>();
+  allChatItems.forEach((c) => {
+    const k = c.name.trim().toLowerCase();
+    nameCounts.set(k, (nameCounts.get(k) || 0) + 1);
+  });
+  const disambiguatorFor = (c: TeamChatChannel) =>
+    (nameCounts.get(c.name.trim().toLowerCase()) || 0) > 1
+      ? c.channelId.replace(/^(ch|dm)_/, "").slice(-6)
+      : undefined;
+
+  // Pick a sensible default channel once data arrives.
+  useEffect(() => {
+    if (activeChannel) return;
+    const first = channels[0]?.channelId ?? dms[0]?.channelId ?? null;
+    if (first) setActiveChannel(first);
+  }, [data]);
+
+  const channelMeta =
+    allChatItems.find((c) => c.channelId === activeChannel) ?? null;
+  const messages = activeChannel ? thread[activeChannel] || [] : [];
+  const totalUnread = allChatItems.reduce(
+    (s, c) => s + (c.unreadCount || 0),
+    0,
+  );
+  const dmOtherMember =
+    channelMeta?.type === "dm"
+      ? findMember(channelMeta.name, members)
+      : undefined;
+
+  // Only surface `group` as visible UI chrome once there's more than one —
+  // a single-letter code like "a" as a lone section header reads as a bug,
+  // not a feature, when it's the only group that exists.
+  const distinctGroups = Array.from(
+    new Set(
+      channels.map((c) => c.group?.trim()).filter((g): g is string => !!g),
+    ),
+  );
+  const showGroupHeaders = distinctGroups.length > 1;
+
+  const groups: { key: string; label: string; items: TeamChatChannel[] }[] =
+    showGroupHeaders
+      ? (() => {
+          const map = new Map<string, TeamChatChannel[]>();
+          channels.forEach((c) => {
+            const key = c.group?.trim() || "_ungrouped";
+            if (!map.has(key)) map.set(key, []);
+            map.get(key)!.push(c);
+          });
+          return Array.from(map.entries()).map(([key, items]) => ({
+            key,
+            label:
+              key === "_ungrouped"
+                ? "Other channels"
+                : `Group ${key.toUpperCase()}`,
+            items,
+          }));
+        })()
+      : [{ key: "_all", label: "Channels", items: channels }];
+
+  const q = search.trim().toLowerCase();
+  const slug = (s: string) =>
+    s
+      .trim()
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/(^-|-$)/g, "");
+  const querySlug = slug(search);
+
+  const visibleGroups = q
+    ? groups
+        .map((g) => ({
+          ...g,
+          items: g.items.filter((c) => c.name.toLowerCase().includes(q)),
+        }))
+        .filter((g) => g.items.length > 0)
+    : groups;
+  const visibleDms = q
+    ? dms.filter((d) => d.name.toLowerCase().includes(q))
+    : dms;
+  const matchedMembers = q
+    ? members.filter(
+        (m) =>
+          m.fullName.toLowerCase().includes(q) &&
+          !dms.some((d) => d.name.toLowerCase() === m.fullName.toLowerCase()),
+      )
+    : [];
+  const hasAnyMatch =
+    !q ||
+    visibleGroups.some((g) => g.items.length > 0) ||
+    visibleDms.length > 0 ||
+    matchedMembers.length > 0;
+  const channelNameTaken = q
+    ? allChatItems.some((c) => slug(c.name) === querySlug)
+    : true;
+
+  useEffect(() => {
+    scrollRef.current?.scrollTo({
+      top: scrollRef.current.scrollHeight,
+      behavior: "smooth",
+    });
+  }, [messages.length, activeChannel]);
+
+  const send = () => {
+    if (!draft.trim() || !activeChannel) return;
+    const msg: ChatMsg = {
+      from: "You",
+      initials: "S",
+      color: "#322F91",
+      time: "Now",
+      text: draft.trim(),
+    };
+    setThread((t) => ({
+      ...t,
+      [activeChannel]: [...(t[activeChannel] || []), msg],
+    }));
+    setDraft("");
+  };
+
+  // No create-channel / create-DM endpoint exists yet, so both actions add
+  // a local-only entry (clearly not persisted) and select it, ready to be
+  // swapped for a real POST once the backend supports it.
+  const createChannel = () => {
+    if (!querySlug || channelNameTaken) return;
+    const id = `local_ch_${querySlug}`;
+    const newChannel: TeamChatChannel = {
+      channelId: id,
+      name: querySlug,
+      type: "channel",
+      topic: "New channel (not yet saved to the server)",
+      group: null,
+      visibility: "public",
+      lastMessageAt: null,
+      lastMessagePreview: "",
+      unreadCount: 0,
+    };
+    setLocalChannels((prev) => [...prev, newChannel]);
+    setThread((t) => ({ ...t, [id]: [] }));
+    setActiveChannel(id);
+    setSearch("");
+    onToast(
+      `Created #${querySlug} locally — connect a create-channel API to persist it`,
+    );
+  };
+
+  const startDm = (member: TeamChatMember) => {
+    const id = `local_dm_${member.userId}`;
+    const existing = [...dms].find((d) => d.channelId === id);
+    if (existing) {
+      setActiveChannel(existing.channelId);
+      setSearch("");
+      return;
+    }
+    const newDm: TeamChatChannel = {
+      channelId: id,
+      name: member.fullName,
+      type: "dm",
+      topic: null,
+      group: null,
+      visibility: "private",
+      lastMessageAt: null,
+      lastMessagePreview: "",
+      unreadCount: 0,
+    };
+    setLocalDms((prev) => [...prev, newDm]);
+    setThread((t) => ({ ...t, [id]: [] }));
+    setActiveChannel(id);
+    setSearch("");
+  };
+
+  const channelColor = (c: TeamChatChannel) => {
+    const m = c.type === "dm" ? findMember(c.name, members) : undefined;
+    return seededColor(m?.userId ?? c.channelId);
+  };
+
+  return (
+    <div style={{ flex: 1, display: "flex", overflow: "hidden", minHeight: 0 }}>
+      {/* Channel list */}
+      <div
+        style={{
+          width: 276,
+          flexShrink: 0,
+          borderRight: `1px solid ${C.brd}`,
+          background: C.bg2,
+          display: "flex",
+          flexDirection: "column",
+          minHeight: 0,
+        }}
+      >
+        <div
+          style={{
+            padding: "14px 14px 10px",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+            borderBottom: `1px solid ${C.brd}`,
+          }}
+        >
+          <div>
+            <div style={{ fontSize: 13.5, fontWeight: 700, color: C.ink }}>
+              Chat
+            </div>
+            <div style={{ fontSize: 11, color: C.ink4, marginTop: 1 }}>
+              {loading
+                ? "Loading…"
+                : totalUnread > 0
+                  ? `${totalUnread} unread`
+                  : "All caught up"}
+            </div>
+          </div>
+          <button
+            title="New channel or DM"
+            onClick={() => searchRef.current?.focus()}
+            style={{
+              width: 26,
+              height: 26,
+              borderRadius: 7,
+              border: `1px solid ${C.brd}`,
+              background: C.bg,
+              color: C.ink3,
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              cursor: "pointer",
+              flexShrink: 0,
+            }}
+          >
+            <svg
+              width="12"
+              height="12"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2.4"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            >
+              <line x1="12" y1="5" x2="12" y2="19" />
+              <line x1="5" y1="12" x2="19" y2="12" />
+            </svg>
+          </button>
+        </div>
+
+        {/* Search / create bar */}
+        <div style={{ padding: "10px 10px 0" }}>
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 7,
+              background: C.bg,
+              border: `1.5px solid ${C.brd2}`,
+              borderRadius: 9,
+              padding: "6px 10px",
+            }}
+            onFocusCapture={(e) => (e.currentTarget.style.borderColor = C.p)}
+            onBlurCapture={(e) => (e.currentTarget.style.borderColor = C.brd2)}
+          >
+            <svg
+              width="13"
+              height="13"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke={C.ink4}
+              strokeWidth="2.5"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            >
+              <circle cx="11" cy="11" r="8" />
+              <line x1="21" y1="21" x2="16.65" y2="16.65" />
+            </svg>
+            <input
+              ref={searchRef}
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              onKeyDown={(e) => {
+                if (
+                  e.key === "Enter" &&
+                  q &&
+                  !channelNameTaken &&
+                  matchedMembers.length === 0
+                )
+                  createChannel();
+              }}
+              placeholder="Search people or channels…"
+              style={{
+                flex: 1,
+                minWidth: 0,
+                border: "none",
+                outline: "none",
+                fontSize: 12.5,
+                color: C.ink,
+                background: "transparent",
+                fontFamily: "inherit",
+              }}
+            />
+            {search && (
+              <button
+                onClick={() => setSearch("")}
+                style={{
+                  border: "none",
+                  background: "transparent",
+                  cursor: "pointer",
+                  color: C.ink4,
+                  display: "flex",
+                  flexShrink: 0,
+                }}
+              >
+                <svg
+                  width="12"
+                  height="12"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2.4"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                >
+                  <line x1="18" y1="6" x2="6" y2="18" />
+                  <line x1="6" y1="6" x2="18" y2="18" />
+                </svg>
+              </button>
+            )}
+          </div>
+
+          {q && matchedMembers.length > 0 && (
+            <div
+              style={{
+                marginTop: 8,
+                display: "flex",
+                flexDirection: "column",
+                gap: 3,
+              }}
+            >
+              {matchedMembers.slice(0, 5).map((m) => (
+                <button
+                  key={m.userId}
+                  onClick={() => startDm(m)}
+                  className="ti-row"
+                  style={{
+                    width: "100%",
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 8,
+                    padding: "7px 9px",
+                    border: "none",
+                    borderRadius: 8,
+                    background: "transparent",
+                    cursor: "pointer",
+                    fontFamily: "inherit",
+                  }}
+                >
+                  <Av
+                    initials={initialsFrom(m.fullName)}
+                    color={seededColor(m.userId)}
+                    size={24}
+                    src={m.avatar || undefined}
+                  />
+                  <span style={{ minWidth: 0, textAlign: "left" }}>
+                    <div
+                      style={{
+                        fontSize: 12.5,
+                        fontWeight: 600,
+                        color: C.ink,
+                        overflow: "hidden",
+                        textOverflow: "ellipsis",
+                        whiteSpace: "nowrap",
+                      }}
+                    >
+                      {m.fullName}
+                    </div>
+                    <div style={{ fontSize: 10.5, color: C.ink4 }}>Message</div>
+                  </span>
+                </button>
+              ))}
+            </div>
+          )}
+
+          {q && !channelNameTaken && matchedMembers.length === 0 && (
+            <button
+              onClick={createChannel}
+              className="ti-row"
+              style={{
+                width: "100%",
+                display: "flex",
+                alignItems: "center",
+                gap: 8,
+                marginTop: 8,
+                padding: "8px 9px",
+                border: `1.5px dashed ${C.brd2}`,
+                borderRadius: 8,
+                background: "transparent",
+                cursor: "pointer",
+                fontFamily: "inherit",
+              }}
+            >
+              <span
+                style={{
+                  width: 20,
+                  height: 20,
+                  borderRadius: 6,
+                  background: C.pSoft,
+                  color: C.p,
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  flexShrink: 0,
+                }}
+              >
+                <svg
+                  width="11"
+                  height="11"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2.6"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                >
+                  <line x1="12" y1="5" x2="12" y2="19" />
+                  <line x1="5" y1="12" x2="19" y2="12" />
+                </svg>
+              </span>
+              <span
+                style={{
+                  fontSize: 12.5,
+                  fontWeight: 600,
+                  color: C.p,
+                  minWidth: 0,
+                  overflow: "hidden",
+                  textOverflow: "ellipsis",
+                  whiteSpace: "nowrap",
+                }}
+              >
+                Create channel "#{querySlug}"
+              </span>
+            </button>
+          )}
+        </div>
+
+        <div
+          style={{
+            flex: 1,
+            overflowY: "auto",
+            padding: "10px 10px 16px",
+            minHeight: 0,
+          }}
+        >
+          {loading ? (
+            <div
+              style={{
+                display: "flex",
+                flexDirection: "column",
+                gap: 8,
+                padding: "4px 6px",
+              }}
+            >
+              {[0, 1, 2].map((i) => (
+                <Skel key={i} w="80%" h={12} d={i * 0.08} />
+              ))}
+            </div>
+          ) : (
+            <>
+              {q && !hasAnyMatch && (
+                <p style={{ fontSize: 12, color: C.ink4, padding: "4px 6px" }}>
+                  Nothing matches "{search}".
+                </p>
+              )}
+
+              {visibleGroups.map((g) => (
+                <div key={g.key} style={{ marginBottom: 4 }}>
+                  {showGroupHeaders && (
+                    <button
+                      onClick={() =>
+                        setExpanded((e) => ({ ...e, [g.key]: !e[g.key] }))
+                      }
+                      style={{
+                        width: "100%",
+                        display: "flex",
+                        alignItems: "center",
+                        gap: 6,
+                        padding: "7px 6px",
+                        border: "none",
+                        background: "transparent",
+                        cursor: "pointer",
+                        fontFamily: "inherit",
+                      }}
+                    >
+                      <svg
+                        width="11"
+                        height="11"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke={C.ink4}
+                        strokeWidth="2.5"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        style={{
+                          flexShrink: 0,
+                          transform:
+                            expanded[g.key] !== false || !!q
+                              ? "rotate(0deg)"
+                              : "rotate(-90deg)",
+                          transition: "transform .12s",
+                        }}
+                      >
+                        <polyline points="6 9 12 15 18 9" />
+                      </svg>
+                      <span
+                        style={{
+                          fontSize: 11,
+                          fontWeight: 800,
+                          textTransform: "uppercase",
+                          letterSpacing: ".07em",
+                          color: C.ink4,
+                          minWidth: 0,
+                          overflow: "hidden",
+                          textOverflow: "ellipsis",
+                          whiteSpace: "nowrap",
+                        }}
+                      >
+                        {g.label}
+                      </span>
+                    </button>
+                  )}
+                  {(!showGroupHeaders || expanded[g.key] !== false || !!q) && (
+                    <div
+                      style={{
+                        marginLeft: showGroupHeaders ? 8 : 0,
+                        marginBottom: 6,
+                      }}
+                    >
+                      {g.items.map((ch) => (
+                        <ChannelRow
+                          key={ch.channelId}
+                          ch={ch}
+                          active={activeChannel === ch.channelId}
+                          color={channelColor(ch)}
+                          disambiguator={disambiguatorFor(ch)}
+                          member={findMember(ch.name, members)}
+                          onClick={() => {
+                            setActiveChannel(ch.channelId);
+                            setSearch("");
+                          }}
+                        />
+                      ))}
+                    </div>
+                  )}
+                </div>
+              ))}
+
+              {visibleDms.length > 0 && (
+                <div style={{ marginTop: 10 }}>
+                  <div
+                    style={{
+                      padding: "7px 6px",
+                      fontSize: 11,
+                      fontWeight: 800,
+                      textTransform: "uppercase",
+                      letterSpacing: ".07em",
+                      color: C.ink4,
+                    }}
+                  >
+                    Direct messages
+                  </div>
+                  <div style={{ marginLeft: 2 }}>
+                    {visibleDms.map((dm) => (
+                      <ChannelRow
+                        key={dm.channelId}
+                        ch={dm}
+                        active={activeChannel === dm.channelId}
+                        color={channelColor(dm)}
+                        disambiguator={disambiguatorFor(dm)}
+                        member={findMember(dm.name, members)}
+                        isDm
+                        onClick={() => {
+                          setActiveChannel(dm.channelId);
+                          setSearch("");
+                        }}
+                      />
+                    ))}
+                  </div>
+                </div>
+              )}
+            </>
+          )}
+        </div>
+      </div>
+
+      {/* Message pane */}
+      <div
+        style={{
+          flex: 1,
+          display: "flex",
+          flexDirection: "column",
+          minWidth: 0,
+          minHeight: 0,
+          background: C.bg,
+          position: "relative",
+        }}
+      >
+        <div
+          style={{
+            minHeight: 52,
+            flexShrink: 0,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+            padding: "10px 20px",
+            background: C.bg2,
+            borderBottom: `1px solid ${C.brd}`,
+          }}
+        >
+          <div
+            style={{
+              minWidth: 0,
+              display: "flex",
+              alignItems: "center",
+              gap: 9,
+            }}
+          >
+            {channelMeta?.type === "dm" ? (
+              <Av
+                initials={initialsFrom(channelMeta.name)}
+                color={channelColor(channelMeta)}
+                size={30}
+                src={dmOtherMember?.avatar || undefined}
+              />
+            ) : channelMeta ? (
+              <span
+                style={{
+                  width: 30,
+                  height: 30,
+                  borderRadius: 9,
+                  background: channelColor(channelMeta),
+                  color: "#fff",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  flexShrink: 0,
+                  fontSize: 14,
+                  fontWeight: 700,
+                }}
+              >
+                #
+              </span>
+            ) : null}
+            <div style={{ minWidth: 0 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                <span style={{ fontSize: 14.5, fontWeight: 700, color: C.ink }}>
+                  {channelMeta?.name ??
+                    (loading ? "Loading…" : "No channel selected")}
+                </span>
+                {channelMeta?.visibility === "private" && (
+                  <svg
+                    width="12"
+                    height="12"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke={C.ink4}
+                    strokeWidth="2.2"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  >
+                    <rect x="3" y="11" width="18" height="10" rx="2" />
+                    <path d="M7 11V7a5 5 0 0 1 10 0v4" />
+                  </svg>
+                )}
+              </div>
+              {channelMeta?.type === "dm"
+                ? dmOtherMember?.email && (
+                    <div
+                      style={{ fontSize: 11.5, color: C.ink4, marginTop: 1 }}
+                    >
+                      {dmOtherMember.email}
+                    </div>
+                  )
+                : channelMeta?.topic &&
+                  channelMeta.topic.trim().toLowerCase() !==
+                    channelMeta.name.trim().toLowerCase() && (
+                    <div
+                      style={{
+                        fontSize: 11.5,
+                        color: C.ink4,
+                        marginTop: 1,
+                        maxWidth: 420,
+                        overflow: "hidden",
+                        textOverflow: "ellipsis",
+                        whiteSpace: "nowrap",
+                      }}
+                    >
+                      {channelMeta.topic}
+                    </div>
+                  )}
+            </div>
+          </div>
+          <button
+            onClick={() => setMembersOpen((v) => !v)}
+            title="View workspace members"
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 10,
+              flexShrink: 0,
+              border: "none",
+              background: membersOpen ? C.pSoft : "transparent",
+              borderRadius: 20,
+              padding: "5px 10px 5px 6px",
+              cursor: "pointer",
+            }}
+          >
+            <div style={{ display: "flex", alignItems: "center" }}>
+              {members.slice(0, 4).map((m, i) => (
+                <span
+                  key={m.userId}
+                  title={m.fullName}
+                  style={{ marginLeft: i === 0 ? 0 : -7, zIndex: 4 - i }}
+                >
+                  <Av
+                    initials={initialsFrom(m.fullName)}
+                    color={seededColor(m.userId)}
+                    size={26}
+                    ring
+                    src={m.avatar || undefined}
+                  />
+                </span>
+              ))}
+            </div>
+            {members.length > 0 && (
+              <span
+                style={{
+                  fontSize: 11,
+                  fontWeight: 600,
+                  color: membersOpen ? C.p : C.ink3,
+                }}
+              >
+                {members.length} in workspace
+              </span>
+            )}
+          </button>
+        </div>
+
+        {membersOpen && (
+          <div
+            style={{
+              position: "absolute",
+              top: 62,
+              right: 20,
+              width: 280,
+              zIndex: 20,
+              background: C.bg2,
+              border: `1px solid ${C.brd}`,
+              borderRadius: 12,
+              boxShadow: "0 12px 32px rgba(0,0,0,.12)",
+              overflow: "hidden",
+            }}
+          >
+            <div
+              style={{
+                padding: "12px 16px",
+                borderBottom: `1px solid ${C.brd}`,
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "space-between",
+              }}
+            >
+              <span style={{ fontSize: 13, fontWeight: 700, color: C.ink }}>
+                Workspace members
+              </span>
+              <button
+                onClick={() => setMembersOpen(false)}
+                style={{
+                  border: "none",
+                  background: "transparent",
+                  cursor: "pointer",
+                  color: C.ink4,
+                  display: "flex",
+                }}
+              >
+                <svg
+                  width="13"
+                  height="13"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2.4"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                >
+                  <line x1="18" y1="6" x2="6" y2="18" />
+                  <line x1="6" y1="6" x2="18" y2="18" />
+                </svg>
+              </button>
+            </div>
+            <div
+              style={{ maxHeight: 320, overflowY: "auto", padding: "6px 8px" }}
+            >
+              {members.map((m) => (
+                <div
+                  key={m.userId}
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 10,
+                    padding: "7px 8px",
+                    borderRadius: 8,
+                  }}
+                >
+                  <Av
+                    initials={initialsFrom(m.fullName)}
+                    color={seededColor(m.userId)}
+                    size={34}
+                    src={m.avatar || undefined}
+                  />
+                  <div style={{ minWidth: 0 }}>
+                    <div
+                      style={{
+                        fontSize: 13,
+                        fontWeight: 600,
+                        color: C.ink,
+                        overflow: "hidden",
+                        textOverflow: "ellipsis",
+                        whiteSpace: "nowrap",
+                      }}
+                    >
+                      {m.fullName}
+                    </div>
+                    <div
+                      style={{
+                        fontSize: 11.5,
+                        color: C.ink4,
+                        overflow: "hidden",
+                        textOverflow: "ellipsis",
+                        whiteSpace: "nowrap",
+                      }}
+                    >
+                      {m.email}
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        <div
+          ref={scrollRef}
+          style={{
+            flex: 1,
+            overflowY: "auto",
+            padding: "18px 24px",
+            display: "flex",
+            flexDirection: "column",
+            gap: 4,
+            minHeight: 0,
+          }}
+        >
+          {!channelMeta ? (
+            <p style={{ fontSize: 13, color: C.ink4, margin: "6px 0" }}>
+              {loading
+                ? "Loading channels…"
+                : "Pick a channel or start a DM from the left."}
+            </p>
+          ) : messages.length === 0 ? (
+            <p style={{ fontSize: 13, color: C.ink4, margin: "6px 0" }}>
+              No messages loaded for{" "}
+              {channelMeta.type === "dm"
+                ? channelMeta.name
+                : "#" + channelMeta.name}{" "}
+              yet — connect a messages endpoint to load history.
+            </p>
+          ) : (
+            messages.map((m, i) => {
+              const prev = messages[i - 1];
+              const grouped = !!prev && prev.from === m.from;
+              return (
+                <div
+                  key={i}
+                  style={{
+                    display: "flex",
+                    gap: 10,
+                    marginTop: grouped ? 2 : 14,
+                    padding: "3px 8px",
+                    borderRadius: 8,
+                  }}
+                >
+                  <div style={{ width: 32, flexShrink: 0 }}>
+                    {!grouped && (
+                      <Av initials={m.initials} color={m.color} size={32} />
+                    )}
+                  </div>
+                  <div style={{ minWidth: 0, flex: 1 }}>
+                    {!grouped && (
+                      <div
+                        style={{
+                          display: "flex",
+                          alignItems: "baseline",
+                          gap: 8,
+                          marginBottom: 2,
                         }}
                       >
                         <span
                           style={{
-                            fontSize: 14,
+                            fontSize: 13,
                             fontWeight: 700,
                             color: C.ink,
-                            letterSpacing: "-.1px",
                           }}
                         >
-                          {ev.title}
+                          {m.from}
                         </span>
-                        <Pill status={ev.status} />
+                        <span
+                          style={{
+                            fontSize: 11,
+                            color: C.ink4,
+                            fontFamily: "monospace",
+                          }}
+                        >
+                          {m.time}
+                        </span>
                       </div>
-                      <div
-                        style={{ display: "flex", flexWrap: "wrap", gap: 14 }}
-                      >
-                        {ev.time && (
-                          <span
-                            style={{
-                              fontSize: 12,
-                              color: C.ink3,
-                              fontFamily: "monospace",
-                            }}
-                          >
-                            ⏰ {ev.time}
-                          </span>
-                        )}
-                        {ev.date && (
-                          <span
-                            style={{
-                              fontSize: 12,
-                              color: C.ink3,
-                              fontFamily: "monospace",
-                            }}
-                          >
-                            {ev.date}
-                          </span>
-                        )}
-                        {ev.attendees && (
-                          <span style={{ fontSize: 12, color: C.ink3 }}>
-                            👤 {ev.attendees}
-                          </span>
-                        )}
-                      </div>
-                    </div>
-                  );
-                })
-              )}
-            </section>
-          );
-        })}
+                    )}
+                    <p
+                      style={{
+                        fontSize: 13.5,
+                        color: C.ink2,
+                        margin: 0,
+                        lineHeight: 1.55,
+                      }}
+                    >
+                      {m.text}
+                    </p>
+                  </div>
+                </div>
+              );
+            })
+          )}
+        </div>
+
+        <div style={{ padding: "12px 20px 18px", flexShrink: 0 }}>
+          <div
+            className="ti-composer"
+            style={{
+              display: "flex",
+              alignItems: "center",
+              padding: "4px 6px 4px 14px",
+            }}
+          >
+            <input
+              value={draft}
+              onChange={(e) => setDraft(e.target.value)}
+              onKeyDown={(e) => e.key === "Enter" && send()}
+              placeholder={
+                channelMeta
+                  ? `Message ${channelMeta.type === "dm" ? channelMeta.name : "#" + channelMeta.name}`
+                  : "Select a channel to message…"
+              }
+              disabled={!channelMeta}
+              style={{
+                flex: 1,
+                minWidth: 0,
+                border: "none",
+                outline: "none",
+                background: "transparent",
+                fontSize: 13.5,
+                fontFamily: "inherit",
+                color: C.ink,
+                padding: "8px 0",
+              }}
+            />
+            <button
+              className="ti-btn-primary"
+              disabled={!draft.trim() || !channelMeta}
+              onClick={send}
+              style={{ padding: "7px 14px", fontSize: 12, flexShrink: 0 }}
+            >
+              Send
+            </button>
+          </div>
+        </div>
       </div>
     </div>
+  );
+};
+
+const ChannelRow: React.FC<{
+  ch: TeamChatChannel;
+  active: boolean;
+  color: string;
+  isDm?: boolean;
+  disambiguator?: string;
+  member?: TeamChatMember;
+  onClick: () => void;
+}> = ({ ch, active, color, isDm, disambiguator, member, onClick }) => {
+  const showTopic =
+    !isDm &&
+    ch.topic &&
+    ch.topic.trim().toLowerCase() !== ch.name.trim().toLowerCase();
+  const hasPreview = !!ch.lastMessagePreview;
+  return (
+    <button
+      onClick={onClick}
+      className="ti-row"
+      style={{
+        width: "100%",
+        display: "flex",
+        alignItems: "center",
+        gap: 8,
+        padding: "8px 10px",
+        marginBottom: 2,
+        border: "none",
+        borderRadius: 8,
+        cursor: "pointer",
+        fontFamily: "inherit",
+        background: active ? C.pSoft : "transparent",
+      }}
+    >
+      {isDm ? (
+        <Av
+          initials={initialsFrom(ch.name)}
+          color={color}
+          size={22}
+          src={member?.avatar || undefined}
+        />
+      ) : (
+        <span
+          style={{
+            width: 22,
+            height: 22,
+            borderRadius: 7,
+            background: color,
+            color: "#fff",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            flexShrink: 0,
+            fontSize: 12,
+            fontWeight: 700,
+          }}
+        >
+          #
+        </span>
+      )}
+      <span style={{ minWidth: 0, flex: 1, textAlign: "left" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+          <span
+            style={{
+              fontSize: 13,
+              fontWeight: active ? 700 : 500,
+              color: active ? C.p : C.ink3,
+              minWidth: 0,
+              overflow: "hidden",
+              textOverflow: "ellipsis",
+              whiteSpace: "nowrap",
+            }}
+          >
+            {ch.name}
+          </span>
+          {ch.visibility === "private" && !isDm && (
+            <svg
+              width="10"
+              height="10"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke={C.ink4}
+              strokeWidth="2.4"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              style={{ flexShrink: 0 }}
+            >
+              <rect x="3" y="11" width="18" height="10" rx="2" />
+              <path d="M7 11V7a5 5 0 0 1 10 0v4" />
+            </svg>
+          )}
+          {disambiguator && (
+            <span
+              style={{
+                fontSize: 9.5,
+                fontFamily: "monospace",
+                color: C.ink4,
+                background: C.bg3,
+                padding: "1px 5px",
+                borderRadius: 5,
+                flexShrink: 0,
+              }}
+            >
+              {disambiguator}
+            </span>
+          )}
+          <span style={{ flex: 1 }} />
+          {ch.unreadCount > 0 && (
+            <span
+              style={{
+                fontSize: 10,
+                fontWeight: 700,
+                minWidth: 17,
+                height: 17,
+                padding: "0 5px",
+                borderRadius: 9,
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                background: active ? C.p : C.bg3,
+                color: active ? "#fff" : C.ink3,
+                flexShrink: 0,
+              }}
+            >
+              {ch.unreadCount}
+            </span>
+          )}
+        </div>
+        {hasPreview ? (
+          <div
+            style={{
+              fontSize: 11,
+              color: C.ink4,
+              overflow: "hidden",
+              textOverflow: "ellipsis",
+              whiteSpace: "nowrap",
+            }}
+          >
+            {ch.lastMessagePreview} · {relTime(ch.lastMessageAt)}
+          </div>
+        ) : showTopic ? (
+          <div
+            style={{
+              fontSize: 11,
+              color: C.ink4,
+              overflow: "hidden",
+              textOverflow: "ellipsis",
+              whiteSpace: "nowrap",
+            }}
+          >
+            {ch.topic}
+          </div>
+        ) : (
+          <div style={{ fontSize: 11, color: C.ink4, fontStyle: "italic" }}>
+            No messages yet
+          </div>
+        )}
+      </span>
+    </button>
   );
 };
 
@@ -1469,6 +3366,7 @@ const Sidebar: React.FC<{
   inboxCount: number;
   sentCount: number;
   calCount: number;
+  chatCount: number;
   onViewChange: (v: PortalView) => void;
   onFolderChange: (f: NavFolder) => void;
 }> = ({
@@ -1478,6 +3376,7 @@ const Sidebar: React.FC<{
   inboxCount,
   sentCount,
   calCount,
+  chatCount,
   onViewChange,
   onFolderChange,
 }) => {
@@ -1541,6 +3440,25 @@ const Sidebar: React.FC<{
           <line x1="16" y1="2" x2="16" y2="6" />
           <line x1="8" y1="2" x2="8" y2="6" />
           <line x1="3" y1="10" x2="21" y2="10" />
+        </svg>
+      ),
+    },
+    {
+      id: "chat",
+      label: "Chat",
+      badge: chatCount,
+      icon: (
+        <svg
+          width="15"
+          height="15"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="2"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+        >
+          <path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z" />
         </svg>
       ),
     },
@@ -1688,22 +3606,39 @@ const Sidebar: React.FC<{
   );
 };
 
-// ── Main ──────────────────────────────────────────────────────────────────────
+// A message's "direction" is always relative to the organisation:
+// inbound  = the org's own inbound mailbox = shown as Customer's Inbox
+// outbound = the org's own outbound mailbox = shown as Customer's Sent,
+//            and that same outbound message is what shows in Organisation's Inbox.
+//
+// So: direction=inbound  -> Customer Inbox  / Organisation Sent
+//     direction=outbound -> Customer Sent   / Organisation Inbox
+function folderDirection(
+  folder: "inbox" | "sent",
+  view: PortalView,
+): "inbound" | "outbound" {
+  if (view === "cust") {
+    return folder === "inbox" ? "inbound" : "outbound";
+  }
+  return folder === "inbox" ? "outbound" : "inbound";
+}
 
 export default function TestInboxView() {
   const tenantId = getTenantId();
   const { name, initials } = getSessionOrg();
   const org: Org = { id: tenantId || "unknown", name, initials };
 
-  const [activeView, setActiveView] = useState<PortalView>("org");
+  const [activeView, setActiveView] = useState<PortalView>("cust");
   const [navFolder, setNavFolder] = useState<NavFolder>("inbox");
   const [threads, setThreads] = useState<Thread[]>([]);
   const [calEvents, setCalEvents] = useState<CalEvent[]>([]);
+  const [teamChat, setTeamChat] = useState<TeamChatBootstrap | null>(null);
   const [selectedThread, setSelectedThread] = useState<Thread | null>(null);
   const [panelVisible, setPanelVisible] = useState(false);
   const [composeOpen, setComposeOpen] = useState(false);
   const [threadsLoading, setThreadsLoading] = useState(false);
   const [calLoading, setCalLoading] = useState(false);
+  const [teamChatLoading, setTeamChatLoading] = useState(false);
   const [toast, setToast] = useState("");
   const [folderCounts, setFolderCounts] = useState({ inbox: 0, sent: 0 });
 
@@ -1717,11 +3652,11 @@ export default function TestInboxView() {
   }, []);
 
   useEffect(() => {
-    if (navFolder === "calendar") return;
+    if (navFolder === "calendar" || navFolder === "chat") return;
     setThreads([]);
     setThreadsLoading(true);
     let cancelled = false;
-    const direction = navFolder === "sent" ? "outbound" : "inbound";
+    const direction = folderDirection(navFolder, activeView);
     inboxFetch<{ messages: MailMessageOut[] }>("/test/mailbox/messages", {
       direction,
     })
@@ -1744,7 +3679,7 @@ export default function TestInboxView() {
   useEffect(() => {
     let cancelled = false;
     inboxFetch<{ messages: MailMessageOut[] }>("/test/mailbox/messages", {
-      direction: "outbound",
+      direction: folderDirection("sent", activeView),
     })
       .then((r) => {
         if (!cancelled)
@@ -1768,6 +3703,19 @@ export default function TestInboxView() {
       .catch(() => {})
       .finally(() => setCalLoading(false));
   }, [navFolder, org.id]);
+
+  const loadTeamChat = useCallback(() => {
+    setTeamChatLoading(true);
+    return inboxFetch<TeamChatBootstrap>("/team-chat/bootstrap")
+      .then((r) => setTeamChat(r))
+      .catch(() => showToast("Couldn't load chat"))
+      .finally(() => setTeamChatLoading(false));
+  }, [showToast]);
+
+  useEffect(() => {
+    if (navFolder !== "chat") return;
+    loadTeamChat();
+  }, [navFolder, org.id, loadTeamChat]);
 
   const openThread = (t: Thread) => {
     setSelectedThread(t);
@@ -1803,6 +3751,12 @@ export default function TestInboxView() {
   };
 
   const handleRefresh = async () => {
+    if (navFolder === "chat") {
+      showToast("Refreshing…");
+      await loadTeamChat();
+      showToast("Up to date ✓");
+      return;
+    }
     showToast("Refreshing…");
     try {
       if (navFolder === "calendar") {
@@ -1814,7 +3768,7 @@ export default function TestInboxView() {
         setCalLoading(false);
       } else {
         setThreadsLoading(true);
-        const d = navFolder === "sent" ? "outbound" : "inbound";
+        const d = folderDirection(navFolder as "inbox" | "sent", activeView);
         const r = await inboxFetch<{ messages: MailMessageOut[] }>(
           "/test/mailbox/messages",
           { direction: d },
@@ -1879,6 +3833,7 @@ export default function TestInboxView() {
         .ti-msg-body p { margin:0 0 .55em; }
         .ti-msg-body p:last-child { margin:0; }
         .ti-msg-body a { color:inherit;opacity:.8;text-decoration:underline; }
+        .ti-cal-card:hover { box-shadow:0 2px 12px rgba(0,0,0,.06); }
       `}</style>
 
       {/* Top bar */}
@@ -1949,6 +3904,13 @@ export default function TestInboxView() {
           inboxCount={inboxBadge}
           sentCount={folderCounts.sent}
           calCount={calEvents.length}
+          chatCount={
+            (teamChat?.channels ?? []).reduce(
+              (s, c) => s + (c.unreadCount || 0),
+              0,
+            ) +
+            (teamChat?.dms ?? []).reduce((s, c) => s + (c.unreadCount || 0), 0)
+          }
           onViewChange={switchView}
           onFolderChange={handleFolderChange}
         />
@@ -1964,7 +3926,20 @@ export default function TestInboxView() {
           }}
         >
           {navFolder === "calendar" ? (
-            <CalendarView events={calEvents} loading={calLoading} />
+            <CalendarView
+              events={calEvents}
+              loading={calLoading}
+              view={activeView}
+              onRefresh={handleRefresh}
+              onToast={showToast}
+            />
+          ) : navFolder === "chat" ? (
+            <ChatView
+              data={teamChat}
+              loading={teamChatLoading}
+              onRefresh={loadTeamChat}
+              onToast={showToast}
+            />
           ) : (
             <ThreadList
               threads={threads}
