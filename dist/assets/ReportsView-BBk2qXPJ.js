@@ -1,4 +1,4 @@
-import{r as t,d as b,j as e}from"./vendor-react-DTmZBiFG.js";import{I as i}from"./AppShell-B-mQwbIy.js";import"./index-BOnGqHK0.js";import"./api-BR5LSxT6.js";import"./vendor-icons-BGVXKQIZ.js";const f=`
+import{r as t,d as b,j as e}from"./vendor-react-DTmZBiFG.js";import{I as i}from"./AppShell-dp91USYu.js";import"./index-Dp8Q0KPc.js";import"./api-BR5LSxT6.js";import"./vendor-icons-BGVXKQIZ.js";const f=`
 .rv-wrap{flex:1;display:flex;flex-direction:column;overflow:hidden;background:var(--bg3)}
 .rv-body{flex:1;overflow-y:auto;overflow-x:hidden;padding:20px 24px 32px;display:flex;flex-direction:column;gap:14px;background:var(--bg3)}
 .rv-card{background:var(--bg2);border:0.5px solid var(--brd);border-radius:14px;box-shadow:var(--sh-s);overflow:hidden}

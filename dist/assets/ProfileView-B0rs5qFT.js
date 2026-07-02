@@ -1,0 +1,1 @@
+import{j as r}from"./vendor-react-DTmZBiFG.js";import{P as o}from"./PanelProfile-Bv4p3_zQ.js";import"./api-BR5LSxT6.js";import"./index-Dp8Q0KPc.js";const a=()=>r.jsx("div",{style:{height:"100%",overflowY:"auto",background:"var(--bg)"},children:r.jsx(o,{})});export{a as default};

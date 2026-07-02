@@ -32,6 +32,22 @@ function getSessionOrg() {
   }
 }
 
+// The saved login session already carries the current user's id/name
+// (see SavedSession in pages/Login.tsx) — reused here so chat messages we
+// sent can be told apart from everyone else's.
+function getSessionUser(): { userId: string; email: string; fullName: string } {
+  try {
+    const s = JSON.parse(localStorage.getItem(SESSION_KEY) ?? "{}");
+    return {
+      userId: s.userId ?? "",
+      email: s.email ?? "",
+      fullName: s.fullName ?? "",
+    };
+  } catch {
+    return { userId: "", email: "", fullName: "" };
+  }
+}
+
 function authHeaders(): Record<string, string> {
   const token = getToken();
   return {
@@ -1852,9 +1868,11 @@ const CalendarView: React.FC<{
 };
 
 // ── Chat (channels) ──────────────────────────────────────────────────────────
-// Wired to GET /team-chat/bootstrap for real channels/DMs/org members.
-// There's no messages-by-channel endpoint yet, so the thread pane still
-// composes locally (clearly not persisted) — swap that in once it exists.
+// Wired to GET /team-chat/bootstrap for real channels/DMs/org members, plus
+// live message history, sending, read-receipts and channel creation against
+// the /team-chat/channels/* endpoints below. There's still no create-DM
+// endpoint, so starting a fresh DM stays a local-only placeholder until one
+// exists — everything else here is now backed by the real API.
 
 interface TeamChatMember {
   userId: string;
@@ -1878,12 +1896,73 @@ interface TeamChatBootstrap {
   channels: TeamChatChannel[];
   dms: TeamChatChannel[];
 }
+interface TeamChatMessageOut {
+  messageId: string;
+  channelId: string;
+  senderId: string;
+  senderName: string;
+  body: string;
+  contentType: string;
+  status: string;
+  createdAt: string;
+}
 interface ChatMsg {
   from: string;
   initials: string;
   color: string;
   time: string;
   text: string;
+  mine: boolean;
+}
+
+// ── Chat API helpers ──────────────────────────────────────────────────────────
+
+function fetchChannelMessages(
+  channelId: string,
+): Promise<TeamChatMessageOut[]> {
+  return inboxFetch<TeamChatMessageOut[]>(
+    `/team-chat/channels/${channelId}/messages`,
+  );
+}
+
+function postChannelMessage(
+  channelId: string,
+  body: string,
+): Promise<TeamChatMessageOut> {
+  return inboxFetch<TeamChatMessageOut>(
+    `/team-chat/channels/${channelId}/messages`,
+    undefined,
+    {
+      method: "POST",
+      body: JSON.stringify({ body, contentType: "Text" }),
+    },
+  );
+}
+
+function markChannelRead(
+  channelId: string,
+  messageId: string,
+): Promise<unknown> {
+  return inboxFetch<unknown>(
+    `/team-chat/channels/${channelId}/read`,
+    undefined,
+    {
+      method: "PATCH",
+      body: JSON.stringify({ messageId }),
+    },
+  );
+}
+
+function createTeamChannel(
+  name: string,
+  topic: string,
+  group: string,
+  visibility: string,
+): Promise<TeamChatChannel> {
+  return inboxFetch<TeamChatChannel>(`/team-chat/channels`, undefined, {
+    method: "POST",
+    body: JSON.stringify({ name, topic, group, visibility }),
+  });
 }
 
 function relTime(iso: string | null): string {
@@ -1914,6 +1993,34 @@ function findMember(
   return members.find((m) => m.fullName.toLowerCase() === name.toLowerCase());
 }
 
+function adaptChatMsg(
+  m: TeamChatMessageOut,
+  currentUser: { userId: string; fullName: string },
+): ChatMsg {
+  const name = m.senderName || "Unknown";
+  // Prefer matching by id, but fall back to a name match — some setups
+  // have the chat service issue its own user ids that don't line up
+  // byte-for-byte with the auth session's userId, and a silent id
+  // mismatch would otherwise put every message on the wrong side.
+  const mine =
+    (!!currentUser.userId && m.senderId === currentUser.userId) ||
+    (!!currentUser.fullName &&
+      name.trim().toLowerCase() === currentUser.fullName.trim().toLowerCase());
+  return {
+    from: name,
+    initials: initialsFrom(name),
+    color: seededColor(m.senderId || name),
+    time: m.createdAt
+      ? new Date(m.createdAt).toLocaleTimeString([], {
+          hour: "2-digit",
+          minute: "2-digit",
+        })
+      : "",
+    text: m.body,
+    mine,
+  };
+}
+
 // Most-recent-activity-first, same convention as every real chat client.
 // Items with no lastMessageAt (freshly created, never messaged) sink to
 // the bottom instead of jumbling the order.
@@ -1927,25 +2034,308 @@ function sortByRecency<T extends { lastMessageAt: string | null }>(
   });
 }
 
+const ChatSectionHeader: React.FC<{
+  label: string;
+  count: number;
+  icon: React.ReactNode;
+}> = ({ label, count, icon }) => (
+  <div
+    style={{
+      display: "flex",
+      alignItems: "center",
+      justifyContent: "space-between",
+      padding: "6px 6px 8px",
+    }}
+  >
+    <span
+      style={{
+        display: "flex",
+        alignItems: "center",
+        gap: 6,
+        fontSize: 11,
+        fontWeight: 800,
+        textTransform: "uppercase",
+        letterSpacing: ".07em",
+        color: C.ink4,
+      }}
+    >
+      {icon}
+      {label}
+    </span>
+    <span
+      style={{
+        fontSize: 10.5,
+        fontWeight: 700,
+        color: C.ink4,
+        background: C.bg3,
+        borderRadius: 20,
+        minWidth: 18,
+        textAlign: "center",
+        padding: "1px 6px",
+      }}
+    >
+      {count}
+    </span>
+  </div>
+);
+
+// ── Create-channel modal ─────────────────────────────────────────────────────
+// Full-featured counterpart to the quick "type a name in search to create"
+// shortcut — surfaces every field POST /team-chat/channels accepts.
+
+const CreateChannelModal: React.FC<{
+  onClose: () => void;
+  onCreated: (created: TeamChatChannel) => void;
+  onToast: (m: string) => void;
+}> = ({ onClose, onCreated, onToast }) => {
+  const [name, setName] = useState("");
+  const [topic, setTopic] = useState("");
+  const [group, setGroup] = useState("");
+  const [visibility, setVisibility] = useState<"public" | "private">("public");
+  const [saving, setSaving] = useState(false);
+
+  const create = async () => {
+    const nameTrimmed = name.trim();
+    if (!nameTrimmed) {
+      onToast("Give the channel a name");
+      return;
+    }
+    setSaving(true);
+    try {
+      const created = await createTeamChannel(
+        nameTrimmed,
+        topic.trim(),
+        group.trim(),
+        visibility,
+      );
+      onToast(`Created #${created.name}`);
+      onCreated(created);
+      onClose();
+    } catch (err: any) {
+      onToast(err?.message ?? "Failed to create channel");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div
+      onClick={(e) => e.target === e.currentTarget && onClose()}
+      style={{
+        position: "fixed",
+        inset: 0,
+        background: "rgba(10,10,20,.45)",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        zIndex: 1000,
+        backdropFilter: "blur(6px)",
+      }}
+    >
+      <div
+        style={{
+          background: C.bg2,
+          borderRadius: 18,
+          boxShadow: "0 24px 64px rgba(0,0,0,.22), 0 0 0 1px rgba(0,0,0,.05)",
+          width: 480,
+          maxWidth: "94vw",
+          overflow: "hidden",
+          animation: "ti-rise .2s cubic-bezier(.16,1,.3,1)",
+        }}
+      >
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+            padding: "16px 22px",
+            borderBottom: `1px solid ${C.brd}`,
+            background: `linear-gradient(to bottom, ${C.pSoft}, ${C.bg2})`,
+          }}
+        >
+          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+            <div
+              style={{
+                width: 32,
+                height: 32,
+                borderRadius: 9,
+                background: C.pGrad,
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+              }}
+            >
+              <svg
+                width="14"
+                height="14"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="white"
+                strokeWidth="2.3"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              >
+                <line x1="4" y1="9" x2="20" y2="9" />
+                <line x1="4" y1="15" x2="20" y2="15" />
+                <line x1="10" y1="3" x2="8" y2="21" />
+                <line x1="16" y1="3" x2="14" y2="21" />
+              </svg>
+            </div>
+            <div>
+              <div style={{ fontSize: 14, fontWeight: 800, color: C.ink }}>
+                New channel
+              </div>
+              <div style={{ fontSize: 11, color: C.pDark, fontWeight: 600 }}>
+                Organise conversations by topic or team
+              </div>
+            </div>
+          </div>
+          <button onClick={onClose} className="ti-close-btn">
+            ✕
+          </button>
+        </div>
+
+        <FieldRow
+          label="Name"
+          value={name}
+          onChange={setName}
+          placeholder="e.g. product-launch"
+        />
+        <FieldRow
+          label="Topic"
+          value={topic}
+          onChange={setTopic}
+          placeholder="What's this channel about? (optional)"
+        />
+        <FieldRow
+          label="Group"
+          value={group}
+          onChange={setGroup}
+          placeholder="Group label, e.g. eng (optional)"
+        />
+
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: 12,
+            padding: "11px 22px",
+          }}
+        >
+          <label
+            style={{
+              fontSize: 11,
+              fontWeight: 700,
+              color: C.ink4,
+              minWidth: 56,
+              textTransform: "uppercase",
+              letterSpacing: ".05em",
+            }}
+          >
+            Access
+          </label>
+          <select
+            value={visibility}
+            onChange={(e) =>
+              setVisibility(e.target.value as "public" | "private")
+            }
+            style={{
+              flex: 1,
+              border: "none",
+              outline: "none",
+              fontSize: 13.5,
+              fontFamily: "inherit",
+              color: C.ink,
+              background: "transparent",
+            }}
+          >
+            <option value="public">Public — anyone in the org can join</option>
+            <option value="private">Private — invite only</option>
+          </select>
+        </div>
+
+        <div
+          style={{
+            display: "flex",
+            gap: 8,
+            padding: "12px 22px 16px",
+            borderTop: `1px solid ${C.brd}`,
+            justifyContent: "flex-end",
+            background: C.bg,
+          }}
+        >
+          <button onClick={onClose} className="ti-btn-ghost">
+            Discard
+          </button>
+          <button
+            onClick={create}
+            disabled={saving}
+            className={saving ? "ti-btn-primary disabled" : "ti-btn-primary"}
+          >
+            {saving ? "Creating…" : "Create channel"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+};
+
 const ChatView: React.FC<{
   data: TeamChatBootstrap | null;
   loading: boolean;
   onRefresh: () => void;
   onToast: (m: string) => void;
 }> = ({ data, loading, onRefresh, onToast }) => {
+  // Used to render messages we sent on the right, everyone else's on the
+  // left — WhatsApp/Telegram style, matching the mail ThreadDetail bubbles.
+  const currentUser = getSessionUser();
   const [localChannels, setLocalChannels] = useState<TeamChatChannel[]>([]);
   const [localDms, setLocalDms] = useState<TeamChatChannel[]>([]);
+  // Per-channel patches (unread reset after opening, latest preview after
+  // sending, etc.) that need to reflect immediately without waiting for the
+  // next /team-chat/bootstrap refresh.
+  const [channelOverrides, setChannelOverrides] = useState<
+    Record<string, Partial<TeamChatChannel>>
+  >({});
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
   const [activeChannel, setActiveChannel] = useState<string | null>(null);
   const [draft, setDraft] = useState("");
   const [thread, setThread] = useState<Record<string, ChatMsg[]>>({});
+  const [msgLoading, setMsgLoading] = useState(false);
+  const [sending, setSending] = useState(false);
+  const [creatingChannel, setCreatingChannel] = useState(false);
+  const [channelModalOpen, setChannelModalOpen] = useState(false);
   const [search, setSearch] = useState("");
   const [membersOpen, setMembersOpen] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
   const searchRef = useRef<HTMLInputElement>(null);
+  // Tracks the newest messageId we've already PATCHed /read for, per
+  // channel, so live polling doesn't re-send a read receipt every tick
+  // when nothing new has arrived.
+  const lastReadIdRef = useRef<Record<string, string>>({});
 
-  const rawChannels = [...(data?.channels ?? []), ...localChannels];
-  const rawDms = [...(data?.dms ?? []), ...localDms];
+  const applyOverride = (c: TeamChatChannel): TeamChatChannel => ({
+    ...c,
+    ...(channelOverrides[c.channelId] || {}),
+  });
+
+  // A locally-created channel (or, once a create-DM endpoint exists, a DM)
+  // will eventually show up in a live bootstrap refresh under the same
+  // channelId — drop the local placeholder once that happens so polling
+  // doesn't produce duplicate rows.
+  const bootstrapChannelIds = new Set(
+    (data?.channels ?? []).map((c) => c.channelId),
+  );
+  const bootstrapDmIds = new Set((data?.dms ?? []).map((c) => c.channelId));
+
+  const rawChannels = [
+    ...(data?.channels ?? []),
+    ...localChannels.filter((c) => !bootstrapChannelIds.has(c.channelId)),
+  ].map(applyOverride);
+  const rawDms = [
+    ...(data?.dms ?? []),
+    ...localDms.filter((c) => !bootstrapDmIds.has(c.channelId)),
+  ].map(applyOverride);
   const channels = sortByRecency(rawChannels);
   const dms = sortByRecency(rawDms);
   const allChatItems = [...channels, ...dms];
@@ -1970,6 +2360,69 @@ const ChatView: React.FC<{
     const first = channels[0]?.channelId ?? dms[0]?.channelId ?? null;
     if (first) setActiveChannel(first);
   }, [data]);
+
+  // Loads a channel's message history. `silent` skips the loading
+  // skeleton and toast-on-error — used for background polling so the
+  // thread updates live without any visible flicker.
+  const loadMessages = useCallback(
+    (channelId: string, silent: boolean) => {
+      if (!silent) setMsgLoading(true);
+      return fetchChannelMessages(channelId)
+        .then((msgs) => {
+          setThread((t) => {
+            const existing = t[channelId] || [];
+            const adapted = msgs.map((mm) => adaptChatMsg(mm, currentUser));
+            const unchanged =
+              adapted.length === existing.length &&
+              adapted[adapted.length - 1]?.text ===
+                existing[existing.length - 1]?.text;
+            return unchanged ? t : { ...t, [channelId]: adapted };
+          });
+          const lastId = msgs[msgs.length - 1]?.messageId;
+          // Guards against PATCHing /read on every poll tick: this only
+          // fires the first time we see a given channel's newest message
+          // id — a quiet 8s tick with no new messages leaves lastId
+          // unchanged, so nothing gets sent.
+          if (lastId && lastReadIdRef.current[channelId] !== lastId) {
+            lastReadIdRef.current[channelId] = lastId;
+            markChannelRead(channelId, lastId).catch(() => {});
+            setChannelOverrides((o) => ({
+              ...o,
+              [channelId]: { ...o[channelId], unreadCount: 0 },
+            }));
+          }
+        })
+        .catch(() => {
+          if (!silent) onToast("Couldn't load messages");
+        })
+        .finally(() => {
+          if (!silent) setMsgLoading(false);
+        });
+    },
+    [onToast, currentUser.userId, currentUser.fullName],
+  );
+
+  // Load history the moment a channel is opened.
+  useEffect(() => {
+    if (!activeChannel) return;
+    // Local-only channels/DMs (not yet backed by the server) have no
+    // message-history endpoint to call — leave their thread as-is.
+    if (activeChannel.startsWith("local_")) return;
+    loadMessages(activeChannel, false);
+  }, [activeChannel, loadMessages]);
+
+  // Then keep it live — poll for new messages every 8s while this channel
+  // stays open, so a reply from the other side shows up without a manual
+  // refresh. The cleanup below is what stops this from stacking up
+  // overlapping timers as the person clicks between channels: React runs
+  // it whenever `activeChannel` changes (switch conversation) and on
+  // unmount (leaving the Chat tab), before the next interval — if any —
+  // is created.
+  useEffect(() => {
+    if (!activeChannel || activeChannel.startsWith("local_")) return;
+    const id = setInterval(() => loadMessages(activeChannel, true), 8000);
+    return () => clearInterval(id);
+  }, [activeChannel, loadMessages]);
 
   const channelMeta =
     allChatItems.find((c) => c.channelId === activeChannel) ?? null;
@@ -2056,46 +2509,91 @@ const ChatView: React.FC<{
     });
   }, [messages.length, activeChannel]);
 
-  const send = () => {
-    if (!draft.trim() || !activeChannel) return;
-    const msg: ChatMsg = {
-      from: "You",
-      initials: "S",
-      color: "#322F91",
-      time: "Now",
-      text: draft.trim(),
-    };
-    setThread((t) => ({
-      ...t,
-      [activeChannel]: [...(t[activeChannel] || []), msg],
-    }));
-    setDraft("");
+  const send = async () => {
+    const text = draft.trim();
+    if (!text || !activeChannel) return;
+
+    // Local-only channels/DMs have no backing endpoint yet — keep the old
+    // optimistic, non-persisted behaviour for those.
+    if (activeChannel.startsWith("local_")) {
+      const msg: ChatMsg = {
+        from: "You",
+        initials: "S",
+        color: "#322F91",
+        time: "Now",
+        text,
+        mine: true,
+      };
+      setThread((t) => ({
+        ...t,
+        [activeChannel]: [...(t[activeChannel] || []), msg],
+      }));
+      setDraft("");
+      return;
+    }
+
+    setSending(true);
+    try {
+      const created = await postChannelMessage(activeChannel, text);
+      setThread((t) => ({
+        ...t,
+        [activeChannel]: [
+          ...(t[activeChannel] || []),
+          // Force mine:true — this is a message we just sent, regardless
+          // of whether the server's senderId happens to match our local
+          // session id byte-for-byte.
+          { ...adaptChatMsg(created, currentUser), mine: true },
+        ],
+      }));
+      if (created.messageId) {
+        lastReadIdRef.current[activeChannel] = created.messageId;
+      }
+      setChannelOverrides((o) => ({
+        ...o,
+        [activeChannel]: {
+          ...o[activeChannel],
+          lastMessageAt: created.createdAt || new Date().toISOString(),
+          lastMessagePreview: text,
+        },
+      }));
+      setDraft("");
+    } catch (err: any) {
+      onToast(err?.message ?? "Failed to send message");
+    } finally {
+      setSending(false);
+    }
   };
 
-  // No create-channel / create-DM endpoint exists yet, so both actions add
-  // a local-only entry (clearly not persisted) and select it, ready to be
-  // swapped for a real POST once the backend supports it.
-  const createChannel = () => {
-    if (!querySlug || channelNameTaken) return;
-    const id = `local_ch_${querySlug}`;
-    const newChannel: TeamChatChannel = {
-      channelId: id,
-      name: querySlug,
-      type: "channel",
-      topic: "New channel (not yet saved to the server)",
-      group: null,
-      visibility: "public",
-      lastMessageAt: null,
-      lastMessagePreview: "",
-      unreadCount: 0,
-    };
-    setLocalChannels((prev) => [...prev, newChannel]);
-    setThread((t) => ({ ...t, [id]: [] }));
-    setActiveChannel(id);
-    setSearch("");
-    onToast(
-      `Created #${querySlug} locally — connect a create-channel API to persist it`,
-    );
+  // Shared by both the quick "type a name to create" search shortcut and
+  // the full New Channel modal — adds the freshly persisted channel to
+  // local state, selects it, and kicks off a background bootstrap refresh
+  // so it settles into the canonical list on the next poll.
+  const addCreatedChannel = useCallback(
+    (created: TeamChatChannel) => {
+      setLocalChannels((prev) => [...prev, created]);
+      setThread((t) => ({ ...t, [created.channelId]: [] }));
+      setActiveChannel(created.channelId);
+      onRefresh();
+    },
+    [onRefresh],
+  );
+
+  // Channels are now persisted via POST /team-chat/channels. DMs still have
+  // no create-DM endpoint, so starting one stays a local-only placeholder
+  // (see startDm below) until the backend supports it.
+  const createChannel = async () => {
+    if (!querySlug || channelNameTaken || creatingChannel) return;
+    setCreatingChannel(true);
+    try {
+      const created = await createTeamChannel(querySlug, "", "", "public");
+      addCreatedChannel(created);
+      setSearch("");
+      onToast(`Created #${created.name}`);
+    } catch (err: any) {
+      onToast(err?.message ?? "Failed to create channel");
+    } finally {
+      setCreatingChannel(false);
+    }
   };
 
   const startDm = (member: TeamChatMember) => {
@@ -2129,135 +2627,57 @@ const ChatView: React.FC<{
   };
 
   return (
-    <div style={{ flex: 1, display: "flex", overflow: "hidden", minHeight: 0 }}>
-      {/* Channel list */}
+    <>
       <div
-        style={{
-          width: 276,
-          flexShrink: 0,
-          borderRight: `1px solid ${C.brd}`,
-          background: C.bg2,
-          display: "flex",
-          flexDirection: "column",
-          minHeight: 0,
-        }}
+        style={{ flex: 1, display: "flex", overflow: "hidden", minHeight: 0 }}
       >
+        {/* Channel list */}
         <div
           style={{
-            padding: "14px 14px 10px",
+            width: 276,
+            flexShrink: 0,
+            borderRight: `1px solid ${C.brd}`,
+            background: C.bg2,
             display: "flex",
-            alignItems: "center",
-            justifyContent: "space-between",
-            borderBottom: `1px solid ${C.brd}`,
+            flexDirection: "column",
+            minHeight: 0,
           }}
         >
-          <div>
-            <div style={{ fontSize: 13.5, fontWeight: 700, color: C.ink }}>
-              Chat
-            </div>
-            <div style={{ fontSize: 11, color: C.ink4, marginTop: 1 }}>
-              {loading
-                ? "Loading…"
-                : totalUnread > 0
-                  ? `${totalUnread} unread`
-                  : "All caught up"}
-            </div>
-          </div>
-          <button
-            title="New channel or DM"
-            onClick={() => searchRef.current?.focus()}
-            style={{
-              width: 26,
-              height: 26,
-              borderRadius: 7,
-              border: `1px solid ${C.brd}`,
-              background: C.bg,
-              color: C.ink3,
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              cursor: "pointer",
-              flexShrink: 0,
-            }}
-          >
-            <svg
-              width="12"
-              height="12"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="2.4"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-            >
-              <line x1="12" y1="5" x2="12" y2="19" />
-              <line x1="5" y1="12" x2="19" y2="12" />
-            </svg>
-          </button>
-        </div>
-
-        {/* Search / create bar */}
-        <div style={{ padding: "10px 10px 0" }}>
           <div
             style={{
+              padding: "14px 14px 10px",
               display: "flex",
               alignItems: "center",
-              gap: 7,
-              background: C.bg,
-              border: `1.5px solid ${C.brd2}`,
-              borderRadius: 9,
-              padding: "6px 10px",
+              justifyContent: "space-between",
+              borderBottom: `1px solid ${C.brd}`,
             }}
-            onFocusCapture={(e) => (e.currentTarget.style.borderColor = C.p)}
-            onBlurCapture={(e) => (e.currentTarget.style.borderColor = C.brd2)}
           >
-            <svg
-              width="13"
-              height="13"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke={C.ink4}
-              strokeWidth="2.5"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-            >
-              <circle cx="11" cy="11" r="8" />
-              <line x1="21" y1="21" x2="16.65" y2="16.65" />
-            </svg>
-            <input
-              ref={searchRef}
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              onKeyDown={(e) => {
-                if (
-                  e.key === "Enter" &&
-                  q &&
-                  !channelNameTaken &&
-                  matchedMembers.length === 0
-                )
-                  createChannel();
-              }}
-              placeholder="Search people or channels…"
-              style={{
-                flex: 1,
-                minWidth: 0,
-                border: "none",
-                outline: "none",
-                fontSize: 12.5,
-                color: C.ink,
-                background: "transparent",
-                fontFamily: "inherit",
-              }}
-            />
-            {search && (
+            <div>
+              <div style={{ fontSize: 13.5, fontWeight: 700, color: C.ink }}>
+                Chat
+              </div>
+              <div style={{ fontSize: 11, color: C.ink4, marginTop: 1 }}>
+                {loading
+                  ? "Loading…"
+                  : totalUnread > 0
+                    ? `${totalUnread} unread`
+                    : "All caught up"}
+              </div>
+            </div>
+            <div className="ti-tooltip-wrap" style={{ position: "relative" }}>
               <button
-                onClick={() => setSearch("")}
+                onClick={() => setChannelModalOpen(true)}
                 style={{
-                  border: "none",
-                  background: "transparent",
-                  cursor: "pointer",
-                  color: C.ink4,
+                  width: 26,
+                  height: 26,
+                  borderRadius: 7,
+                  border: `1px solid ${C.brd}`,
+                  background: C.bg,
+                  color: C.ink3,
                   display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  cursor: "pointer",
                   flexShrink: 0,
                 }}
               >
@@ -2271,669 +2691,965 @@ const ChatView: React.FC<{
                   strokeLinecap="round"
                   strokeLinejoin="round"
                 >
-                  <line x1="18" y1="6" x2="6" y2="18" />
-                  <line x1="6" y1="6" x2="18" y2="18" />
-                </svg>
-              </button>
-            )}
-          </div>
-
-          {q && matchedMembers.length > 0 && (
-            <div
-              style={{
-                marginTop: 8,
-                display: "flex",
-                flexDirection: "column",
-                gap: 3,
-              }}
-            >
-              {matchedMembers.slice(0, 5).map((m) => (
-                <button
-                  key={m.userId}
-                  onClick={() => startDm(m)}
-                  className="ti-row"
-                  style={{
-                    width: "100%",
-                    display: "flex",
-                    alignItems: "center",
-                    gap: 8,
-                    padding: "7px 9px",
-                    border: "none",
-                    borderRadius: 8,
-                    background: "transparent",
-                    cursor: "pointer",
-                    fontFamily: "inherit",
-                  }}
-                >
-                  <Av
-                    initials={initialsFrom(m.fullName)}
-                    color={seededColor(m.userId)}
-                    size={24}
-                    src={m.avatar || undefined}
-                  />
-                  <span style={{ minWidth: 0, textAlign: "left" }}>
-                    <div
-                      style={{
-                        fontSize: 12.5,
-                        fontWeight: 600,
-                        color: C.ink,
-                        overflow: "hidden",
-                        textOverflow: "ellipsis",
-                        whiteSpace: "nowrap",
-                      }}
-                    >
-                      {m.fullName}
-                    </div>
-                    <div style={{ fontSize: 10.5, color: C.ink4 }}>Message</div>
-                  </span>
-                </button>
-              ))}
-            </div>
-          )}
-
-          {q && !channelNameTaken && matchedMembers.length === 0 && (
-            <button
-              onClick={createChannel}
-              className="ti-row"
-              style={{
-                width: "100%",
-                display: "flex",
-                alignItems: "center",
-                gap: 8,
-                marginTop: 8,
-                padding: "8px 9px",
-                border: `1.5px dashed ${C.brd2}`,
-                borderRadius: 8,
-                background: "transparent",
-                cursor: "pointer",
-                fontFamily: "inherit",
-              }}
-            >
-              <span
-                style={{
-                  width: 20,
-                  height: 20,
-                  borderRadius: 6,
-                  background: C.pSoft,
-                  color: C.p,
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "center",
-                  flexShrink: 0,
-                }}
-              >
-                <svg
-                  width="11"
-                  height="11"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="2.6"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                >
                   <line x1="12" y1="5" x2="12" y2="19" />
                   <line x1="5" y1="12" x2="19" y2="12" />
                 </svg>
-              </span>
-              <span
-                style={{
-                  fontSize: 12.5,
-                  fontWeight: 600,
-                  color: C.p,
-                  minWidth: 0,
-                  overflow: "hidden",
-                  textOverflow: "ellipsis",
-                  whiteSpace: "nowrap",
-                }}
-              >
-                Create channel "#{querySlug}"
-              </span>
-            </button>
-          )}
-        </div>
+              </button>
+              <span className="ti-tooltip">Create a new channel</span>
+            </div>
+          </div>
 
-        <div
-          style={{
-            flex: 1,
-            overflowY: "auto",
-            padding: "10px 10px 16px",
-            minHeight: 0,
-          }}
-        >
-          {loading ? (
+          {/* Search / create bar */}
+          <div style={{ padding: "10px 10px 0" }}>
             <div
               style={{
                 display: "flex",
-                flexDirection: "column",
-                gap: 8,
-                padding: "4px 6px",
+                alignItems: "center",
+                gap: 7,
+                background: C.bg,
+                border: `1.5px solid ${C.brd2}`,
+                borderRadius: 9,
+                padding: "6px 10px",
               }}
+              onFocusCapture={(e) => (e.currentTarget.style.borderColor = C.p)}
+              onBlurCapture={(e) =>
+                (e.currentTarget.style.borderColor = C.brd2)
+              }
             >
-              {[0, 1, 2].map((i) => (
-                <Skel key={i} w="80%" h={12} d={i * 0.08} />
-              ))}
-            </div>
-          ) : (
-            <>
-              {q && !hasAnyMatch && (
-                <p style={{ fontSize: 12, color: C.ink4, padding: "4px 6px" }}>
-                  Nothing matches "{search}".
-                </p>
-              )}
-
-              {visibleGroups.map((g) => (
-                <div key={g.key} style={{ marginBottom: 4 }}>
-                  {showGroupHeaders && (
-                    <button
-                      onClick={() =>
-                        setExpanded((e) => ({ ...e, [g.key]: !e[g.key] }))
-                      }
-                      style={{
-                        width: "100%",
-                        display: "flex",
-                        alignItems: "center",
-                        gap: 6,
-                        padding: "7px 6px",
-                        border: "none",
-                        background: "transparent",
-                        cursor: "pointer",
-                        fontFamily: "inherit",
-                      }}
-                    >
-                      <svg
-                        width="11"
-                        height="11"
-                        viewBox="0 0 24 24"
-                        fill="none"
-                        stroke={C.ink4}
-                        strokeWidth="2.5"
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                        style={{
-                          flexShrink: 0,
-                          transform:
-                            expanded[g.key] !== false || !!q
-                              ? "rotate(0deg)"
-                              : "rotate(-90deg)",
-                          transition: "transform .12s",
-                        }}
-                      >
-                        <polyline points="6 9 12 15 18 9" />
-                      </svg>
-                      <span
-                        style={{
-                          fontSize: 11,
-                          fontWeight: 800,
-                          textTransform: "uppercase",
-                          letterSpacing: ".07em",
-                          color: C.ink4,
-                          minWidth: 0,
-                          overflow: "hidden",
-                          textOverflow: "ellipsis",
-                          whiteSpace: "nowrap",
-                        }}
-                      >
-                        {g.label}
-                      </span>
-                    </button>
-                  )}
-                  {(!showGroupHeaders || expanded[g.key] !== false || !!q) && (
-                    <div
-                      style={{
-                        marginLeft: showGroupHeaders ? 8 : 0,
-                        marginBottom: 6,
-                      }}
-                    >
-                      {g.items.map((ch) => (
-                        <ChannelRow
-                          key={ch.channelId}
-                          ch={ch}
-                          active={activeChannel === ch.channelId}
-                          color={channelColor(ch)}
-                          disambiguator={disambiguatorFor(ch)}
-                          member={findMember(ch.name, members)}
-                          onClick={() => {
-                            setActiveChannel(ch.channelId);
-                            setSearch("");
-                          }}
-                        />
-                      ))}
-                    </div>
-                  )}
-                </div>
-              ))}
-
-              {visibleDms.length > 0 && (
-                <div style={{ marginTop: 10 }}>
-                  <div
-                    style={{
-                      padding: "7px 6px",
-                      fontSize: 11,
-                      fontWeight: 800,
-                      textTransform: "uppercase",
-                      letterSpacing: ".07em",
-                      color: C.ink4,
-                    }}
-                  >
-                    Direct messages
-                  </div>
-                  <div style={{ marginLeft: 2 }}>
-                    {visibleDms.map((dm) => (
-                      <ChannelRow
-                        key={dm.channelId}
-                        ch={dm}
-                        active={activeChannel === dm.channelId}
-                        color={channelColor(dm)}
-                        disambiguator={disambiguatorFor(dm)}
-                        member={findMember(dm.name, members)}
-                        isDm
-                        onClick={() => {
-                          setActiveChannel(dm.channelId);
-                          setSearch("");
-                        }}
-                      />
-                    ))}
-                  </div>
-                </div>
-              )}
-            </>
-          )}
-        </div>
-      </div>
-
-      {/* Message pane */}
-      <div
-        style={{
-          flex: 1,
-          display: "flex",
-          flexDirection: "column",
-          minWidth: 0,
-          minHeight: 0,
-          background: C.bg,
-          position: "relative",
-        }}
-      >
-        <div
-          style={{
-            minHeight: 52,
-            flexShrink: 0,
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "space-between",
-            padding: "10px 20px",
-            background: C.bg2,
-            borderBottom: `1px solid ${C.brd}`,
-          }}
-        >
-          <div
-            style={{
-              minWidth: 0,
-              display: "flex",
-              alignItems: "center",
-              gap: 9,
-            }}
-          >
-            {channelMeta?.type === "dm" ? (
-              <Av
-                initials={initialsFrom(channelMeta.name)}
-                color={channelColor(channelMeta)}
-                size={30}
-                src={dmOtherMember?.avatar || undefined}
-              />
-            ) : channelMeta ? (
-              <span
-                style={{
-                  width: 30,
-                  height: 30,
-                  borderRadius: 9,
-                  background: channelColor(channelMeta),
-                  color: "#fff",
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "center",
-                  flexShrink: 0,
-                  fontSize: 14,
-                  fontWeight: 700,
-                }}
+              <svg
+                width="13"
+                height="13"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke={C.ink4}
+                strokeWidth="2.5"
+                strokeLinecap="round"
+                strokeLinejoin="round"
               >
-                #
-              </span>
-            ) : null}
-            <div style={{ minWidth: 0 }}>
-              <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                <span style={{ fontSize: 14.5, fontWeight: 700, color: C.ink }}>
-                  {channelMeta?.name ??
-                    (loading ? "Loading…" : "No channel selected")}
-                </span>
-                {channelMeta?.visibility === "private" && (
+                <circle cx="11" cy="11" r="8" />
+                <line x1="21" y1="21" x2="16.65" y2="16.65" />
+              </svg>
+              <input
+                ref={searchRef}
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                onKeyDown={(e) => {
+                  if (
+                    e.key === "Enter" &&
+                    q &&
+                    !channelNameTaken &&
+                    matchedMembers.length === 0
+                  )
+                    createChannel();
+                }}
+                placeholder="Search people or channels…"
+                style={{
+                  flex: 1,
+                  minWidth: 0,
+                  border: "none",
+                  outline: "none",
+                  fontSize: 12.5,
+                  color: C.ink,
+                  background: "transparent",
+                  fontFamily: "inherit",
+                }}
+              />
+              {search && (
+                <button
+                  onClick={() => setSearch("")}
+                  style={{
+                    border: "none",
+                    background: "transparent",
+                    cursor: "pointer",
+                    color: C.ink4,
+                    display: "flex",
+                    flexShrink: 0,
+                  }}
+                >
                   <svg
                     width="12"
                     height="12"
                     viewBox="0 0 24 24"
                     fill="none"
-                    stroke={C.ink4}
-                    strokeWidth="2.2"
+                    stroke="currentColor"
+                    strokeWidth="2.4"
                     strokeLinecap="round"
                     strokeLinejoin="round"
                   >
-                    <rect x="3" y="11" width="18" height="10" rx="2" />
-                    <path d="M7 11V7a5 5 0 0 1 10 0v4" />
+                    <line x1="18" y1="6" x2="6" y2="18" />
+                    <line x1="6" y1="6" x2="18" y2="18" />
                   </svg>
-                )}
-              </div>
-              {channelMeta?.type === "dm"
-                ? dmOtherMember?.email && (
-                    <div
-                      style={{ fontSize: 11.5, color: C.ink4, marginTop: 1 }}
-                    >
-                      {dmOtherMember.email}
-                    </div>
-                  )
-                : channelMeta?.topic &&
-                  channelMeta.topic.trim().toLowerCase() !==
-                    channelMeta.name.trim().toLowerCase() && (
-                    <div
-                      style={{
-                        fontSize: 11.5,
-                        color: C.ink4,
-                        marginTop: 1,
-                        maxWidth: 420,
-                        overflow: "hidden",
-                        textOverflow: "ellipsis",
-                        whiteSpace: "nowrap",
-                      }}
-                    >
-                      {channelMeta.topic}
-                    </div>
-                  )}
+                </button>
+              )}
             </div>
-          </div>
-          <button
-            onClick={() => setMembersOpen((v) => !v)}
-            title="View workspace members"
-            style={{
-              display: "flex",
-              alignItems: "center",
-              gap: 10,
-              flexShrink: 0,
-              border: "none",
-              background: membersOpen ? C.pSoft : "transparent",
-              borderRadius: 20,
-              padding: "5px 10px 5px 6px",
-              cursor: "pointer",
-            }}
-          >
-            <div style={{ display: "flex", alignItems: "center" }}>
-              {members.slice(0, 4).map((m, i) => (
-                <span
-                  key={m.userId}
-                  title={m.fullName}
-                  style={{ marginLeft: i === 0 ? 0 : -7, zIndex: 4 - i }}
-                >
-                  <Av
-                    initials={initialsFrom(m.fullName)}
-                    color={seededColor(m.userId)}
-                    size={26}
-                    ring
-                    src={m.avatar || undefined}
-                  />
-                </span>
-              ))}
-            </div>
-            {members.length > 0 && (
-              <span
-                style={{
-                  fontSize: 11,
-                  fontWeight: 600,
-                  color: membersOpen ? C.p : C.ink3,
-                }}
-              >
-                {members.length} in workspace
-              </span>
-            )}
-          </button>
-        </div>
 
-        {membersOpen && (
-          <div
-            style={{
-              position: "absolute",
-              top: 62,
-              right: 20,
-              width: 280,
-              zIndex: 20,
-              background: C.bg2,
-              border: `1px solid ${C.brd}`,
-              borderRadius: 12,
-              boxShadow: "0 12px 32px rgba(0,0,0,.12)",
-              overflow: "hidden",
-            }}
-          >
-            <div
-              style={{
-                padding: "12px 16px",
-                borderBottom: `1px solid ${C.brd}`,
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "space-between",
-              }}
-            >
-              <span style={{ fontSize: 13, fontWeight: 700, color: C.ink }}>
-                Workspace members
-              </span>
-              <button
-                onClick={() => setMembersOpen(false)}
+            {q && matchedMembers.length > 0 && (
+              <div
                 style={{
-                  border: "none",
-                  background: "transparent",
-                  cursor: "pointer",
-                  color: C.ink4,
+                  marginTop: 8,
                   display: "flex",
+                  flexDirection: "column",
+                  gap: 3,
                 }}
               >
-                <svg
-                  width="13"
-                  height="13"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="2.4"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                >
-                  <line x1="18" y1="6" x2="6" y2="18" />
-                  <line x1="6" y1="6" x2="18" y2="18" />
-                </svg>
-              </button>
-            </div>
-            <div
-              style={{ maxHeight: 320, overflowY: "auto", padding: "6px 8px" }}
-            >
-              {members.map((m) => (
-                <div
-                  key={m.userId}
-                  style={{
-                    display: "flex",
-                    alignItems: "center",
-                    gap: 10,
-                    padding: "7px 8px",
-                    borderRadius: 8,
-                  }}
-                >
-                  <Av
-                    initials={initialsFrom(m.fullName)}
-                    color={seededColor(m.userId)}
-                    size={34}
-                    src={m.avatar || undefined}
-                  />
-                  <div style={{ minWidth: 0 }}>
-                    <div
-                      style={{
-                        fontSize: 13,
-                        fontWeight: 600,
-                        color: C.ink,
-                        overflow: "hidden",
-                        textOverflow: "ellipsis",
-                        whiteSpace: "nowrap",
-                      }}
-                    >
-                      {m.fullName}
-                    </div>
-                    <div
-                      style={{
-                        fontSize: 11.5,
-                        color: C.ink4,
-                        overflow: "hidden",
-                        textOverflow: "ellipsis",
-                        whiteSpace: "nowrap",
-                      }}
-                    >
-                      {m.email}
-                    </div>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
-
-        <div
-          ref={scrollRef}
-          style={{
-            flex: 1,
-            overflowY: "auto",
-            padding: "18px 24px",
-            display: "flex",
-            flexDirection: "column",
-            gap: 4,
-            minHeight: 0,
-          }}
-        >
-          {!channelMeta ? (
-            <p style={{ fontSize: 13, color: C.ink4, margin: "6px 0" }}>
-              {loading
-                ? "Loading channels…"
-                : "Pick a channel or start a DM from the left."}
-            </p>
-          ) : messages.length === 0 ? (
-            <p style={{ fontSize: 13, color: C.ink4, margin: "6px 0" }}>
-              No messages loaded for{" "}
-              {channelMeta.type === "dm"
-                ? channelMeta.name
-                : "#" + channelMeta.name}{" "}
-              yet — connect a messages endpoint to load history.
-            </p>
-          ) : (
-            messages.map((m, i) => {
-              const prev = messages[i - 1];
-              const grouped = !!prev && prev.from === m.from;
-              return (
-                <div
-                  key={i}
-                  style={{
-                    display: "flex",
-                    gap: 10,
-                    marginTop: grouped ? 2 : 14,
-                    padding: "3px 8px",
-                    borderRadius: 8,
-                  }}
-                >
-                  <div style={{ width: 32, flexShrink: 0 }}>
-                    {!grouped && (
-                      <Av initials={m.initials} color={m.color} size={32} />
-                    )}
-                  </div>
-                  <div style={{ minWidth: 0, flex: 1 }}>
-                    {!grouped && (
+                {matchedMembers.slice(0, 5).map((m) => (
+                  <button
+                    key={m.userId}
+                    onClick={() => startDm(m)}
+                    className="ti-row"
+                    style={{
+                      width: "100%",
+                      display: "flex",
+                      alignItems: "center",
+                      gap: 8,
+                      padding: "7px 9px",
+                      border: "none",
+                      borderRadius: 8,
+                      background: "transparent",
+                      cursor: "pointer",
+                      fontFamily: "inherit",
+                    }}
+                  >
+                    <Av
+                      initials={initialsFrom(m.fullName)}
+                      color={seededColor(m.userId)}
+                      size={24}
+                      src={m.avatar || undefined}
+                    />
+                    <span style={{ minWidth: 0, textAlign: "left" }}>
                       <div
                         style={{
-                          display: "flex",
-                          alignItems: "baseline",
-                          gap: 8,
-                          marginBottom: 2,
+                          fontSize: 12.5,
+                          fontWeight: 600,
+                          color: C.ink,
+                          overflow: "hidden",
+                          textOverflow: "ellipsis",
+                          whiteSpace: "nowrap",
                         }}
                       >
-                        <span
-                          style={{
-                            fontSize: 13,
-                            fontWeight: 700,
-                            color: C.ink,
-                          }}
-                        >
-                          {m.from}
-                        </span>
-                        <span
-                          style={{
-                            fontSize: 11,
-                            color: C.ink4,
-                            fontFamily: "monospace",
-                          }}
-                        >
-                          {m.time}
-                        </span>
+                        {m.fullName}
                       </div>
-                    )}
-                    <p
-                      style={{
-                        fontSize: 13.5,
-                        color: C.ink2,
-                        margin: 0,
-                        lineHeight: 1.55,
-                      }}
-                    >
-                      {m.text}
-                    </p>
-                  </div>
-                </div>
-              );
-            })
-          )}
-        </div>
+                      <div style={{ fontSize: 10.5, color: C.ink4 }}>
+                        Message
+                      </div>
+                    </span>
+                  </button>
+                ))}
+              </div>
+            )}
 
-        <div style={{ padding: "12px 20px 18px", flexShrink: 0 }}>
+            {q && !channelNameTaken && matchedMembers.length === 0 && (
+              <button
+                onClick={createChannel}
+                disabled={creatingChannel}
+                className="ti-row"
+                style={{
+                  width: "100%",
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 8,
+                  marginTop: 8,
+                  padding: "8px 9px",
+                  border: `1.5px dashed ${C.brd2}`,
+                  borderRadius: 8,
+                  background: "transparent",
+                  cursor: creatingChannel ? "default" : "pointer",
+                  fontFamily: "inherit",
+                  opacity: creatingChannel ? 0.6 : 1,
+                }}
+              >
+                <span
+                  style={{
+                    width: 20,
+                    height: 20,
+                    borderRadius: 6,
+                    background: C.pSoft,
+                    color: C.p,
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    flexShrink: 0,
+                  }}
+                >
+                  <svg
+                    width="11"
+                    height="11"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2.6"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  >
+                    <line x1="12" y1="5" x2="12" y2="19" />
+                    <line x1="5" y1="12" x2="19" y2="12" />
+                  </svg>
+                </span>
+                <span
+                  style={{
+                    fontSize: 12.5,
+                    fontWeight: 600,
+                    color: C.p,
+                    minWidth: 0,
+                    overflow: "hidden",
+                    textOverflow: "ellipsis",
+                    whiteSpace: "nowrap",
+                  }}
+                >
+                  {creatingChannel
+                    ? `Creating "#${querySlug}"…`
+                    : `Create channel "#${querySlug}"`}
+                </span>
+              </button>
+            )}
+          </div>
+
           <div
-            className="ti-composer"
             style={{
-              display: "flex",
-              alignItems: "center",
-              padding: "4px 6px 4px 14px",
+              flex: 1,
+              overflowY: "auto",
+              padding: "10px 10px 16px",
+              minHeight: 0,
             }}
           >
-            <input
-              value={draft}
-              onChange={(e) => setDraft(e.target.value)}
-              onKeyDown={(e) => e.key === "Enter" && send()}
-              placeholder={
-                channelMeta
-                  ? `Message ${channelMeta.type === "dm" ? channelMeta.name : "#" + channelMeta.name}`
-                  : "Select a channel to message…"
-              }
-              disabled={!channelMeta}
+            {loading ? (
+              <div
+                style={{
+                  display: "flex",
+                  flexDirection: "column",
+                  gap: 8,
+                  padding: "4px 6px",
+                }}
+              >
+                {[0, 1, 2].map((i) => (
+                  <Skel key={i} w="80%" h={12} d={i * 0.08} />
+                ))}
+              </div>
+            ) : (
+              <>
+                {q && !hasAnyMatch && (
+                  <div
+                    style={{
+                      display: "flex",
+                      flexDirection: "column",
+                      alignItems: "center",
+                      gap: 6,
+                      padding: "28px 10px",
+                      textAlign: "center",
+                    }}
+                  >
+                    <span style={{ fontSize: 22, opacity: 0.35 }}>🔍</span>
+                    <span style={{ fontSize: 12, color: C.ink4 }}>
+                      Nothing matches "{search}"
+                    </span>
+                  </div>
+                )}
+
+                {visibleGroups.some((g) => g.items.length > 0) && (
+                  <div style={{ marginBottom: 14 }}>
+                    <ChatSectionHeader
+                      label="Channels"
+                      count={channels.length}
+                      icon={
+                        <svg
+                          width="11"
+                          height="11"
+                          viewBox="0 0 24 24"
+                          fill="none"
+                          stroke={C.ink4}
+                          strokeWidth="2.3"
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                        >
+                          <line x1="4" y1="9" x2="20" y2="9" />
+                          <line x1="4" y1="15" x2="20" y2="15" />
+                          <line x1="10" y1="3" x2="8" y2="21" />
+                          <line x1="16" y1="3" x2="14" y2="21" />
+                        </svg>
+                      }
+                    />
+                    {visibleGroups.map((g) => (
+                      <div key={g.key} style={{ marginBottom: 2 }}>
+                        {showGroupHeaders && (
+                          <button
+                            onClick={() =>
+                              setExpanded((e) => ({ ...e, [g.key]: !e[g.key] }))
+                            }
+                            style={{
+                              width: "100%",
+                              display: "flex",
+                              alignItems: "center",
+                              gap: 6,
+                              padding: "6px 6px 6px 14px",
+                              border: "none",
+                              background: "transparent",
+                              cursor: "pointer",
+                              fontFamily: "inherit",
+                            }}
+                          >
+                            <svg
+                              width="10"
+                              height="10"
+                              viewBox="0 0 24 24"
+                              fill="none"
+                              stroke={C.ink4}
+                              strokeWidth="2.5"
+                              strokeLinecap="round"
+                              strokeLinejoin="round"
+                              style={{
+                                flexShrink: 0,
+                                transform:
+                                  expanded[g.key] !== false || !!q
+                                    ? "rotate(0deg)"
+                                    : "rotate(-90deg)",
+                                transition: "transform .12s",
+                              }}
+                            >
+                              <polyline points="6 9 12 15 18 9" />
+                            </svg>
+                            <span
+                              style={{
+                                fontSize: 10.5,
+                                fontWeight: 700,
+                                textTransform: "uppercase",
+                                letterSpacing: ".06em",
+                                color: C.ink4,
+                                minWidth: 0,
+                                overflow: "hidden",
+                                textOverflow: "ellipsis",
+                                whiteSpace: "nowrap",
+                              }}
+                            >
+                              {g.label}
+                            </span>
+                          </button>
+                        )}
+                        {(!showGroupHeaders ||
+                          expanded[g.key] !== false ||
+                          !!q) && (
+                          <div
+                            style={{
+                              marginLeft: showGroupHeaders ? 10 : 2,
+                              marginBottom: 4,
+                            }}
+                          >
+                            {g.items.map((ch) => (
+                              <ChannelRow
+                                key={ch.channelId}
+                                ch={ch}
+                                active={activeChannel === ch.channelId}
+                                color={channelColor(ch)}
+                                disambiguator={disambiguatorFor(ch)}
+                                member={findMember(ch.name, members)}
+                                onClick={() => {
+                                  setActiveChannel(ch.channelId);
+                                  setSearch("");
+                                }}
+                              />
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                {visibleDms.length > 0 && (
+                  <div>
+                    <ChatSectionHeader
+                      label="Direct messages"
+                      count={dms.length}
+                      icon={
+                        <svg
+                          width="11"
+                          height="11"
+                          viewBox="0 0 24 24"
+                          fill="none"
+                          stroke={C.ink4}
+                          strokeWidth="2.3"
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                        >
+                          <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" />
+                          <circle cx="12" cy="7" r="4" />
+                        </svg>
+                      }
+                    />
+                    <div style={{ marginLeft: 2 }}>
+                      {visibleDms.map((dm) => (
+                        <ChannelRow
+                          key={dm.channelId}
+                          ch={dm}
+                          active={activeChannel === dm.channelId}
+                          color={channelColor(dm)}
+                          disambiguator={disambiguatorFor(dm)}
+                          member={findMember(dm.name, members)}
+                          isDm
+                          onClick={() => {
+                            setActiveChannel(dm.channelId);
+                            setSearch("");
+                          }}
+                        />
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {!q && channels.length === 0 && dms.length === 0 && (
+                  <div
+                    style={{
+                      display: "flex",
+                      flexDirection: "column",
+                      alignItems: "center",
+                      gap: 6,
+                      padding: "40px 16px",
+                      textAlign: "center",
+                    }}
+                  >
+                    <span style={{ fontSize: 26, opacity: 0.3 }}>💬</span>
+                    <span
+                      style={{ fontSize: 12.5, fontWeight: 600, color: C.ink3 }}
+                    >
+                      No channels yet
+                    </span>
+                    <span style={{ fontSize: 11.5, color: C.ink4 }}>
+                      Search above to create one
+                    </span>
+                  </div>
+                )}
+              </>
+            )}
+          </div>
+        </div>
+
+        {/* Message pane */}
+        <div
+          style={{
+            flex: 1,
+            display: "flex",
+            flexDirection: "column",
+            minWidth: 0,
+            minHeight: 0,
+            background: C.bg,
+            position: "relative",
+          }}
+        >
+          <div
+            style={{
+              minHeight: 56,
+              flexShrink: 0,
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "space-between",
+              padding: "10px 22px",
+              background: `linear-gradient(to bottom, ${C.bg2}, ${C.bg3}30)`,
+              borderBottom: `1px solid ${C.brd}`,
+            }}
+          >
+            <div
               style={{
-                flex: 1,
                 minWidth: 0,
-                border: "none",
-                outline: "none",
-                background: "transparent",
-                fontSize: 13.5,
-                fontFamily: "inherit",
-                color: C.ink,
-                padding: "8px 0",
+                display: "flex",
+                alignItems: "center",
+                gap: 10,
               }}
-            />
-            <button
-              className="ti-btn-primary"
-              disabled={!draft.trim() || !channelMeta}
-              onClick={send}
-              style={{ padding: "7px 14px", fontSize: 12, flexShrink: 0 }}
             >
-              Send
+              {channelMeta?.type === "dm" ? (
+                <Av
+                  initials={initialsFrom(channelMeta.name)}
+                  color={channelColor(channelMeta)}
+                  size={32}
+                  src={dmOtherMember?.avatar || undefined}
+                />
+              ) : channelMeta ? (
+                <span
+                  style={{
+                    width: 32,
+                    height: 32,
+                    borderRadius: 9,
+                    background: `linear-gradient(135deg, ${channelColor(channelMeta)} 0%, ${channelColor(channelMeta)}CC 100%)`,
+                    color: "#fff",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    flexShrink: 0,
+                    fontSize: 15,
+                    fontWeight: 700,
+                    boxShadow: `0 2px 8px ${channelColor(channelMeta)}40`,
+                  }}
+                >
+                  #
+                </span>
+              ) : null}
+              <div style={{ minWidth: 0 }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                  <span
+                    style={{ fontSize: 14.5, fontWeight: 700, color: C.ink }}
+                  >
+                    {channelMeta?.name ??
+                      (loading ? "Loading…" : "No channel selected")}
+                  </span>
+                  {channelMeta?.visibility === "private" && (
+                    <svg
+                      width="12"
+                      height="12"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke={C.ink4}
+                      strokeWidth="2.2"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                    >
+                      <rect x="3" y="11" width="18" height="10" rx="2" />
+                      <path d="M7 11V7a5 5 0 0 1 10 0v4" />
+                    </svg>
+                  )}
+                </div>
+                {channelMeta?.type === "dm"
+                  ? dmOtherMember?.email && (
+                      <div
+                        style={{ fontSize: 11.5, color: C.ink4, marginTop: 1 }}
+                      >
+                        {dmOtherMember.email}
+                      </div>
+                    )
+                  : channelMeta?.topic &&
+                    channelMeta.topic.trim().toLowerCase() !==
+                      channelMeta.name.trim().toLowerCase() && (
+                      <div
+                        style={{
+                          fontSize: 11.5,
+                          color: C.ink4,
+                          marginTop: 1,
+                          maxWidth: 420,
+                          overflow: "hidden",
+                          textOverflow: "ellipsis",
+                          whiteSpace: "nowrap",
+                        }}
+                      >
+                        {channelMeta.topic}
+                      </div>
+                    )}
+              </div>
+            </div>
+            <button
+              onClick={() => setMembersOpen((v) => !v)}
+              title="View workspace members"
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: 10,
+                flexShrink: 0,
+                border: "none",
+                background: membersOpen ? C.pSoft : "transparent",
+                borderRadius: 20,
+                padding: "5px 10px 5px 6px",
+                cursor: "pointer",
+              }}
+            >
+              <div style={{ display: "flex", alignItems: "center" }}>
+                {members.slice(0, 4).map((m, i) => (
+                  <span
+                    key={m.userId}
+                    title={m.fullName}
+                    style={{ marginLeft: i === 0 ? 0 : -7, zIndex: 4 - i }}
+                  >
+                    <Av
+                      initials={initialsFrom(m.fullName)}
+                      color={seededColor(m.userId)}
+                      size={26}
+                      ring
+                      src={m.avatar || undefined}
+                    />
+                  </span>
+                ))}
+              </div>
+              {members.length > 0 && (
+                <span
+                  style={{
+                    fontSize: 11,
+                    fontWeight: 600,
+                    color: membersOpen ? C.p : C.ink3,
+                  }}
+                >
+                  {members.length} in workspace
+                </span>
+              )}
             </button>
+          </div>
+
+          {membersOpen && (
+            <div
+              style={{
+                position: "absolute",
+                top: 62,
+                right: 20,
+                width: 280,
+                zIndex: 20,
+                background: C.bg2,
+                border: `1px solid ${C.brd}`,
+                borderRadius: 12,
+                boxShadow: "0 12px 32px rgba(0,0,0,.12)",
+                overflow: "hidden",
+              }}
+            >
+              <div
+                style={{
+                  padding: "12px 16px",
+                  borderBottom: `1px solid ${C.brd}`,
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "space-between",
+                }}
+              >
+                <span style={{ fontSize: 13, fontWeight: 700, color: C.ink }}>
+                  Workspace members
+                </span>
+                <button
+                  onClick={() => setMembersOpen(false)}
+                  style={{
+                    border: "none",
+                    background: "transparent",
+                    cursor: "pointer",
+                    color: C.ink4,
+                    display: "flex",
+                  }}
+                >
+                  <svg
+                    width="13"
+                    height="13"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2.4"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  >
+                    <line x1="18" y1="6" x2="6" y2="18" />
+                    <line x1="6" y1="6" x2="18" y2="18" />
+                  </svg>
+                </button>
+              </div>
+              <div
+                style={{
+                  maxHeight: 320,
+                  overflowY: "auto",
+                  padding: "6px 8px",
+                }}
+              >
+                {members.map((m) => (
+                  <div
+                    key={m.userId}
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      gap: 10,
+                      padding: "7px 8px",
+                      borderRadius: 8,
+                    }}
+                  >
+                    <Av
+                      initials={initialsFrom(m.fullName)}
+                      color={seededColor(m.userId)}
+                      size={34}
+                      src={m.avatar || undefined}
+                    />
+                    <div style={{ minWidth: 0 }}>
+                      <div
+                        style={{
+                          fontSize: 13,
+                          fontWeight: 600,
+                          color: C.ink,
+                          overflow: "hidden",
+                          textOverflow: "ellipsis",
+                          whiteSpace: "nowrap",
+                        }}
+                      >
+                        {m.fullName}
+                      </div>
+                      <div
+                        style={{
+                          fontSize: 11.5,
+                          color: C.ink4,
+                          overflow: "hidden",
+                          textOverflow: "ellipsis",
+                          whiteSpace: "nowrap",
+                        }}
+                      >
+                        {m.email}
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          <div
+            ref={scrollRef}
+            style={{
+              flex: 1,
+              overflowY: "auto",
+              padding: "18px 24px",
+              display: "flex",
+              flexDirection: "column",
+              gap: 4,
+              minHeight: 0,
+            }}
+          >
+            {!channelMeta ? (
+              <div
+                style={{
+                  flex: 1,
+                  display: "flex",
+                  flexDirection: "column",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  gap: 8,
+                  textAlign: "center",
+                }}
+              >
+                <span style={{ fontSize: 30, opacity: 0.25 }}>💬</span>
+                <span style={{ fontSize: 13, color: C.ink4 }}>
+                  {loading
+                    ? "Loading channels…"
+                    : "Pick a channel or start a DM from the left"}
+                </span>
+              </div>
+            ) : msgLoading ? (
+              <div
+                style={{
+                  display: "flex",
+                  flexDirection: "column",
+                  gap: 16,
+                  padding: "4px 8px",
+                }}
+              >
+                {[0, 1, 2].map((i) => (
+                  <div key={i} style={{ display: "flex", gap: 10 }}>
+                    <Skel w={32} h={32} r="50%" d={i * 0.08} />
+                    <div
+                      style={{
+                        flex: 1,
+                        display: "flex",
+                        flexDirection: "column",
+                        gap: 6,
+                        paddingTop: 2,
+                      }}
+                    >
+                      <Skel w="26%" h={10} d={i * 0.08 + 0.04} />
+                      <Skel w="62%" h={14} d={i * 0.08 + 0.08} />
+                    </div>
+                  </div>
+                ))}
+              </div>
+            ) : messages.length === 0 ? (
+              <div
+                style={{
+                  flex: 1,
+                  display: "flex",
+                  flexDirection: "column",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  gap: 6,
+                  textAlign: "center",
+                }}
+              >
+                <span style={{ fontSize: 28, opacity: 0.25 }}>👋</span>
+                <span style={{ fontSize: 13, fontWeight: 600, color: C.ink3 }}>
+                  No messages yet
+                </span>
+                <span style={{ fontSize: 12, color: C.ink4 }}>
+                  Say hello in{" "}
+                  {channelMeta.type === "dm"
+                    ? channelMeta.name
+                    : "#" + channelMeta.name}
+                </span>
+              </div>
+            ) : (
+              messages.map((m, i) => {
+                const prev = messages[i - 1];
+                const grouped = !!prev && prev.from === m.from;
+                const mine = m.mine;
+                return (
+                  <div
+                    key={i}
+                    className="ti-msg-row"
+                    style={{
+                      display: "flex",
+                      gap: 10,
+                      flexDirection: mine ? "row-reverse" : "row",
+                      marginTop: grouped ? 2 : 14,
+                      padding: "4px 10px",
+                      borderRadius: 8,
+                    }}
+                  >
+                    <div style={{ width: 32, flexShrink: 0 }}>
+                      {!grouped && (
+                        <Av initials={m.initials} color={m.color} size={32} />
+                      )}
+                    </div>
+                    <div
+                      style={{
+                        minWidth: 0,
+                        maxWidth: "68%",
+                        display: "flex",
+                        flexDirection: "column",
+                        alignItems: mine ? "flex-end" : "flex-start",
+                      }}
+                    >
+                      {!grouped && (
+                        <div
+                          style={{
+                            display: "flex",
+                            alignItems: "baseline",
+                            gap: 8,
+                            marginBottom: 3,
+                            flexDirection: mine ? "row-reverse" : "row",
+                          }}
+                        >
+                          <span
+                            style={{
+                              fontSize: 13,
+                              fontWeight: 700,
+                              color: C.ink,
+                            }}
+                          >
+                            {mine ? "You" : m.from}
+                          </span>
+                          <span
+                            style={{
+                              fontSize: 11,
+                              color: C.ink4,
+                              fontFamily: "monospace",
+                            }}
+                          >
+                            {m.time}
+                          </span>
+                        </div>
+                      )}
+                      <div
+                        className="ti-msg-body"
+                        style={{
+                          fontSize: 13.5,
+                          lineHeight: 1.6,
+                          padding: "9px 14px",
+                          borderRadius: mine
+                            ? "14px 4px 14px 14px"
+                            : "4px 14px 14px 14px",
+                          color: mine ? "#fff" : C.ink2,
+                          background: mine ? C.pGrad : C.bg2,
+                          boxShadow: mine
+                            ? `0 3px 10px ${C.pGlow}`
+                            : `0 1px 2px rgba(0,0,0,.05), inset 0 0 0 1px ${C.brd}`,
+                        }}
+                      >
+                        {m.text}
+                      </div>
+                    </div>
+                  </div>
+                );
+              })
+            )}
+          </div>
+
+          <div style={{ padding: "10px 20px 18px", flexShrink: 0 }}>
+            <div
+              className="ti-composer"
+              style={{
+                display: "flex",
+                alignItems: "center",
+                padding: "4px 4px 4px 16px",
+                borderRadius: 24,
+              }}
+            >
+              <input
+                value={draft}
+                onChange={(e) => setDraft(e.target.value)}
+                onKeyDown={(e) => e.key === "Enter" && send()}
+                placeholder={
+                  channelMeta
+                    ? `Message ${channelMeta.type === "dm" ? channelMeta.name : "#" + channelMeta.name}`
+                    : "Select a channel to message…"
+                }
+                disabled={!channelMeta || sending}
+                style={{
+                  flex: 1,
+                  minWidth: 0,
+                  border: "none",
+                  outline: "none",
+                  background: "transparent",
+                  fontSize: 13.5,
+                  fontFamily: "inherit",
+                  color: C.ink,
+                  padding: "9px 0",
+                }}
+              />
+              <button
+                disabled={!draft.trim() || !channelMeta || sending}
+                onClick={send}
+                title="Send"
+                style={{
+                  width: 32,
+                  height: 32,
+                  borderRadius: "50%",
+                  border: "none",
+                  flexShrink: 0,
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  background:
+                    !draft.trim() || !channelMeta || sending ? C.bg3 : C.pGrad,
+                  color:
+                    !draft.trim() || !channelMeta || sending ? C.ink4 : "#fff",
+                  cursor:
+                    !draft.trim() || !channelMeta || sending
+                      ? "not-allowed"
+                      : "pointer",
+                  boxShadow:
+                    !draft.trim() || !channelMeta || sending
+                      ? "none"
+                      : `0 2px 8px ${C.pGlow}`,
+                  transition: "background .12s,box-shadow .12s",
+                }}
+              >
+                {sending ? (
+                  <svg
+                    width="14"
+                    height="14"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2.4"
+                    strokeLinecap="round"
+                    style={{ animation: "ti-spin .8s linear infinite" }}
+                  >
+                    <path d="M21 12a9 9 0 1 1-9-9" />
+                  </svg>
+                ) : (
+                  <svg
+                    width="15"
+                    height="15"
+                    viewBox="0 0 24 24"
+                    fill="currentColor"
+                    style={{ marginLeft: 1 }}
+                  >
+                    <path d="M2.5 12l18-8-6 8 6 8-18-8z" />
+                  </svg>
+                )}
+              </button>
+            </div>
           </div>
         </div>
       </div>
-    </div>
+      {channelModalOpen && (
+        <CreateChannelModal
+          onClose={() => setChannelModalOpen(false)}
+          onCreated={addCreatedChannel}
+          onToast={onToast}
+        />
+      )}
+    </>
   );
 };
 
@@ -2956,40 +3672,57 @@ const ChannelRow: React.FC<{
       onClick={onClick}
       className="ti-row"
       style={{
+        position: "relative",
         width: "100%",
         display: "flex",
         alignItems: "center",
-        gap: 8,
-        padding: "8px 10px",
+        gap: 9,
+        padding: "9px 10px 9px 12px",
         marginBottom: 2,
         border: "none",
-        borderRadius: 8,
+        borderRadius: 9,
         cursor: "pointer",
         fontFamily: "inherit",
         background: active ? C.pSoft : "transparent",
+        transition: "background .12s",
       }}
     >
+      {active && (
+        <span
+          style={{
+            position: "absolute",
+            left: 0,
+            top: "20%",
+            bottom: "20%",
+            width: 3,
+            borderRadius: "0 3px 3px 0",
+            background: C.p,
+          }}
+        />
+      )}
       {isDm ? (
         <Av
           initials={initialsFrom(ch.name)}
           color={color}
-          size={22}
+          size={24}
+          ring={active}
           src={member?.avatar || undefined}
         />
       ) : (
         <span
           style={{
-            width: 22,
-            height: 22,
+            width: 24,
+            height: 24,
             borderRadius: 7,
-            background: color,
+            background: `linear-gradient(135deg, ${color} 0%, ${color}CC 100%)`,
             color: "#fff",
             display: "flex",
             alignItems: "center",
             justifyContent: "center",
             flexShrink: 0,
-            fontSize: 12,
+            fontSize: 12.5,
             fontWeight: 700,
+            boxShadow: active ? `0 2px 6px ${color}55` : "none",
           }}
         >
           #
@@ -3641,6 +4374,7 @@ export default function TestInboxView() {
   const [teamChatLoading, setTeamChatLoading] = useState(false);
   const [toast, setToast] = useState("");
   const [folderCounts, setFolderCounts] = useState({ inbox: 0, sent: 0 });
+  const [calCount, setCalCount] = useState(0);
 
   const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const closeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -3694,12 +4428,32 @@ export default function TestInboxView() {
     };
   }, [org.id, activeView]);
 
+  // Eager fetch, independent of which tab is open — mirrors the Sent-count
+  // effect above. Without this, the Calendar badge stayed at 0 until the
+  // person actually opened the Calendar tab, while Inbox/Sent populated
+  // immediately on load.
+  useEffect(() => {
+    let cancelled = false;
+    inboxFetch<{ events: CalEventOut[] }>("/test/calendar/events")
+      .then((r) => {
+        if (!cancelled) setCalCount((r.events || []).length);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [org.id]);
+
   useEffect(() => {
     if (navFolder !== "calendar") return;
     setCalEvents([]);
     setCalLoading(true);
     inboxFetch<{ events: CalEventOut[] }>("/test/calendar/events")
-      .then((r) => setCalEvents((r.events || []).map(adaptCalEvent)))
+      .then((r) => {
+        const adapted = (r.events || []).map(adaptCalEvent);
+        setCalEvents(adapted);
+        setCalCount(adapted.length);
+      })
       .catch(() => {})
       .finally(() => setCalLoading(false));
   }, [navFolder, org.id]);
@@ -3712,10 +4466,27 @@ export default function TestInboxView() {
       .finally(() => setTeamChatLoading(false));
   }, [showToast]);
 
+  // Background refresh — same call as loadTeamChat but without toggling the
+  // loading state, so the sidebar's unread badges / previews update live
+  // without flashing "Loading…" every poll.
+  const refreshTeamChatSilently = useCallback(() => {
+    return inboxFetch<TeamChatBootstrap>("/team-chat/bootstrap")
+      .then((r) => setTeamChat(r))
+      .catch(() => {});
+  }, []);
+
   useEffect(() => {
     if (navFolder !== "chat") return;
     loadTeamChat();
   }, [navFolder, org.id, loadTeamChat]);
+
+  // Keep the channel/DM list live — new messages elsewhere update unread
+  // counts and previews every 10s while the Chat tab is open.
+  useEffect(() => {
+    if (navFolder !== "chat") return;
+    const id = setInterval(refreshTeamChatSilently, 10000);
+    return () => clearInterval(id);
+  }, [navFolder, org.id, refreshTeamChatSilently]);
 
   const openThread = (t: Thread) => {
     setSelectedThread(t);
@@ -3764,7 +4535,9 @@ export default function TestInboxView() {
         const r = await inboxFetch<{ events: CalEventOut[] }>(
           "/test/calendar/events",
         );
-        setCalEvents((r.events || []).map(adaptCalEvent));
+        const adapted = (r.events || []).map(adaptCalEvent);
+        setCalEvents(adapted);
+        setCalCount(adapted.length);
         setCalLoading(false);
       } else {
         setThreadsLoading(true);
@@ -3807,6 +4580,7 @@ export default function TestInboxView() {
         @keyframes ti-pop  { from{opacity:0;transform:translateY(8px) scale(.97)} to{opacity:1;transform:none} }
         @keyframes ti-rise { from{opacity:0;transform:translateY(14px) scale(.98)} to{opacity:1;transform:none} }
         @keyframes ti-toast{ from{opacity:0;transform:translateX(-50%) translateY(10px)} to{opacity:1;transform:translateX(-50%)} }
+        @keyframes ti-spin { to { transform: rotate(360deg); } }
 
         .ti-nav-btn { display:flex;align-items:center;gap:9px;width:100%;padding:8px 10px;margin-bottom:2px;border-radius:9px;border:none;cursor:pointer;text-align:left;font-size:13.5px;font-weight:500;font-family:inherit;background:transparent;color:var(--ink3,#4B5563);transition:background .1s,color .1s; }
         .ti-nav-btn:hover { background:var(--bg3,#F1F2F5); }
@@ -3834,6 +4608,10 @@ export default function TestInboxView() {
         .ti-msg-body p:last-child { margin:0; }
         .ti-msg-body a { color:inherit;opacity:.8;text-decoration:underline; }
         .ti-cal-card:hover { box-shadow:0 2px 12px rgba(0,0,0,.06); }
+        .ti-msg-row:hover { background:var(--bg3,#F1F2F5); }
+        .ti-tooltip { position:absolute; top:calc(100% + 7px); right:0; background:rgba(15,14,23,.92); color:#fff; font-size:11px; font-weight:600; padding:5px 10px; border-radius:7px; white-space:nowrap; opacity:0; pointer-events:none; transform:translateY(-4px); transition:opacity .12s,transform .12s; z-index:30; box-shadow:0 6px 18px rgba(0,0,0,.18); }
+        .ti-tooltip::after { content:""; position:absolute; bottom:100%; right:9px; border:5px solid transparent; border-bottom-color:rgba(15,14,23,.92); }
+        .ti-tooltip-wrap:hover .ti-tooltip { opacity:1; transform:translateY(0); }
       `}</style>
 
       {/* Top bar */}
@@ -3903,7 +4681,7 @@ export default function TestInboxView() {
           navFolder={navFolder}
           inboxCount={inboxBadge}
           sentCount={folderCounts.sent}
-          calCount={calEvents.length}
+          calCount={calCount}
           chatCount={
             (teamChat?.channels ?? []).reduce(
               (s, c) => s + (c.unreadCount || 0),
